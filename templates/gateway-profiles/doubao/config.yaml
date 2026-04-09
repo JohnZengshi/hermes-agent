@@ -10,8 +10,13 @@ platforms:
       key: "${API_KEY}"
 
 model:
-  default: minimax-m2.5-free
-  provider: opencode-zen
+  default: kimi-k2.5
+  provider: opencode-go
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  nudge_interval: 3
 
 platform_toolsets:
   api_server:
