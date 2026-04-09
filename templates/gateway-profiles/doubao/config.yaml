@@ -12,7 +12,7 @@ platforms:
       key: "${API_KEY}"
 
 model:
-  default: kimi-k2.5
+  default: minimax-m2.7
   provider: opencode-go
 
 memory:
