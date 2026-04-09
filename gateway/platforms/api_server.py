@@ -464,8 +464,6 @@ def _get_or_create_user_id(request: "web.Request") -> str:
         guest_id,
     )
     return guest_id
-
-
 def _infer_platform_from_user_agent(user_agent: Optional[str]) -> Optional[str]:
     ua = (user_agent or "").lower()
     if not ua:
@@ -476,9 +474,7 @@ def _infer_platform_from_user_agent(user_agent: Optional[str]) -> Optional[str]:
     return None
 
 
-def _extract_device_context(
-    request: "web.Request", body: Dict[str, Any]
-) -> Dict[str, str]:
+def _extract_device_context(request: "web.Request", body: Dict[str, Any]) -> Dict[str, str]:
     platform = _normalize_device_platform(
         _first_non_empty_string(
             body.get("device_platform"),
@@ -1337,6 +1333,8 @@ class APIServerAdapter(BasePlatformAdapter):
                 json_body=body,
                 session_id=raw_session_id,
             )
+
+        request["device_context"] = _extract_device_context(request, body)
 
         messages = body.get("messages")
         if not messages or not isinstance(messages, list):
@@ -2322,7 +2320,6 @@ class APIServerAdapter(BasePlatformAdapter):
                 except Exception:
                     pass
             return response
-
         raw_input = body.get("input")
         if raw_input is None:
             return web.json_response(_openai_error("Missing 'input' field"), status=400)

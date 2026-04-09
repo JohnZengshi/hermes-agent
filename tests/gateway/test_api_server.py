@@ -259,7 +259,6 @@ class TestDeviceContextExtraction:
             "client_name": "LegacyClient",
         }
 
-
 # ---------------------------------------------------------------------------
 # Helpers for HTTP tests
 # ---------------------------------------------------------------------------
@@ -2205,6 +2204,25 @@ class TestCORS:
             assert "X-Device-OS-Version" in allowed
             assert "X-Client-Name" in allowed
             assert "X-Fingerprint" in allowed
+
+    @pytest.mark.asyncio
+    async def test_cors_allows_hermes_device_headers(self):
+        adapter = _make_adapter(cors_origins=["http://localhost:3000"])
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.options(
+                "/v1/chat/completions",
+                headers={
+                    "Origin": "http://localhost:3000",
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "X-Hermes-Device-Platform, X-Hermes-Device-OS-Version, X-Hermes-Client-Name",
+                },
+            )
+            allowed = resp.headers.get("Access-Control-Allow-Headers", "")
+            assert resp.status == 200
+            assert "X-Hermes-Device-Platform" in allowed
+            assert "X-Hermes-Device-OS-Version" in allowed
+            assert "X-Hermes-Client-Name" in allowed
 
     @pytest.mark.asyncio
     async def test_cors_sets_vary_origin_header(self):

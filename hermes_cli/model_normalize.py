@@ -379,6 +379,8 @@ def normalize_model_for_provider(model_input: str, target_provider: str) -> str:
     # --- OpenCode Zen: Claude stays hyphenated; other models keep dots ---
     if provider == "opencode-zen":
         bare = _strip_matching_provider_prefix(name, provider)
+        if bare == name and name.startswith("opencode-zen:"):
+            bare = name.split(":", 1)[1].strip()
         if "/" in bare:
             return bare
         if bare.lower().startswith("claude-"):

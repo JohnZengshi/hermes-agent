@@ -65,7 +65,6 @@ class TestAnthropicDotToHyphen:
 
 # ── OpenCode Zen regression ────────────────────────────────────────────
 
-
 class TestOpenCodeZenModelNormalization:
     """OpenCode Zen preserves dots for most models, but Claude stays hyphenated."""
 
