@@ -235,8 +235,125 @@ class ResponseStore:
 
 _CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-Hermes-Device-Platform, X-Device-Platform, X-Hermes-Device-OS-Version, X-Device-OS-Version, X-Hermes-Client-Name, X-Client-Name",
 }
+
+_DEVICE_PLATFORM_HEADERS = ("X-Hermes-Device-Platform", "X-Device-Platform")
+_DEVICE_OS_VERSION_HEADERS = (
+    "X-Hermes-Device-OS-Version",
+    "X-Device-OS-Version",
+)
+_CLIENT_NAME_HEADERS = ("X-Hermes-Client-Name", "X-Client-Name")
+
+_DEVICE_PLATFORM_ALIASES = {
+    "ios": "iOS",
+    "iphone": "iOS",
+    "ipad": "iOS",
+    "android": "Android",
+    "mac": "macOS",
+    "macos": "macOS",
+    "darwin": "macOS",
+    "windows": "Windows",
+    "win32": "Windows",
+    "linux": "Linux",
+    "web": "Web",
+    "browser": "Web",
+}
+
+_USER_AGENT_PLATFORM_HINTS = (
+    (("iphone", "ipad", " ios"), "iOS"),
+    (("android",), "Android"),
+    (("mac os x", "macintosh"), "macOS"),
+    (("windows",), "Windows"),
+    (("linux",), "Linux"),
+)
+
+
+def _first_non_empty_string(*values: Any) -> Optional[str]:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _nested_string(data: Dict[str, Any], *path: str) -> Optional[str]:
+    current: Any = data
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return _first_non_empty_string(current)
+
+
+def _normalize_device_platform(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    raw = value.strip().lower()
+    if not raw:
+        return None
+    return _DEVICE_PLATFORM_ALIASES.get(raw, value.strip())
+
+
+def _header_value(request: "web.Request", names: tuple[str, ...]) -> Optional[str]:
+    for name in names:
+        value = _first_non_empty_string(request.headers.get(name))
+        if value:
+            return value
+    return None
+
+
+def _infer_platform_from_user_agent(user_agent: Optional[str]) -> Optional[str]:
+    ua = (user_agent or "").lower()
+    if not ua:
+        return None
+    for markers, platform in _USER_AGENT_PLATFORM_HINTS:
+        if any(marker in ua for marker in markers):
+            return platform
+    return None
+
+
+def _extract_device_context(request: "web.Request", body: Dict[str, Any]) -> Dict[str, str]:
+    platform = _normalize_device_platform(
+        _first_non_empty_string(
+            body.get("device_platform"),
+            body.get("client_platform"),
+            _nested_string(body, "metadata", "device_platform"),
+            _nested_string(body, "metadata", "client_platform"),
+            _nested_string(body, "metadata", "device", "platform"),
+            _nested_string(body, "client", "platform"),
+            _nested_string(body, "device", "platform"),
+            _header_value(request, _DEVICE_PLATFORM_HEADERS),
+            _infer_platform_from_user_agent(request.headers.get("User-Agent")),
+        )
+    )
+    os_version = _first_non_empty_string(
+        body.get("device_os_version"),
+        body.get("os_version"),
+        _nested_string(body, "metadata", "device_os_version"),
+        _nested_string(body, "metadata", "os_version"),
+        _nested_string(body, "metadata", "device", "os_version"),
+        _nested_string(body, "client", "os_version"),
+        _nested_string(body, "device", "os_version"),
+        _header_value(request, _DEVICE_OS_VERSION_HEADERS),
+    )
+    client_name = _first_non_empty_string(
+        body.get("client_name"),
+        _nested_string(body, "metadata", "client_name"),
+        _nested_string(body, "client", "name"),
+        _header_value(request, _CLIENT_NAME_HEADERS),
+    )
+
+    context: Dict[str, str] = {}
+    if platform:
+        context["platform"] = platform
+    if os_version:
+        context["os_version"] = os_version
+    if client_name:
+        context["client_name"] = client_name
+    return context
 
 
 if AIOHTTP_AVAILABLE:
@@ -529,9 +646,14 @@ class APIServerAdapter(BasePlatformAdapter):
         from run_agent import AIAgent
         from gateway.run import _resolve_runtime_agent_kwargs, _resolve_gateway_model, _load_gateway_config
         from hermes_cli.tools_config import _get_platform_tools
+        from hermes_cli.model_normalize import normalize_model_for_provider
 
         runtime_kwargs = _resolve_runtime_agent_kwargs()
         model = _resolve_gateway_model()
+
+        provider = runtime_kwargs.get("provider") or ""
+        if provider and model:
+            model = normalize_model_for_provider(model, provider)
 
         user_config = _load_gateway_config()
         enabled_toolsets = sorted(_get_platform_tools(user_config, "api_server"))
@@ -623,6 +745,8 @@ class APIServerAdapter(BasePlatformAdapter):
             body = await request.json()
         except (json.JSONDecodeError, Exception):
             return web.json_response(_openai_error("Invalid JSON in request body"), status=400)
+
+        request["device_context"] = _extract_device_context(request, body)
 
         messages = body.get("messages")
         if not messages or not isinstance(messages, list):
@@ -1403,6 +1527,8 @@ class APIServerAdapter(BasePlatformAdapter):
                 {"error": {"message": "Invalid JSON in request body", "type": "invalid_request_error"}},
                 status=400,
             )
+
+        request["device_context"] = _extract_device_context(request, body)
 
         raw_input = body.get("input")
         if raw_input is None:
