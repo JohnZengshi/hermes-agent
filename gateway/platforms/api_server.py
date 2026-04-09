@@ -32,7 +32,25 @@ import re
 import sqlite3
 import time
 import uuid
+from enum import StrEnum
 from typing import Any, Dict, List, Optional
+
+
+class HermesHeader(StrEnum):
+    """API 服务器使用的 X-Hermes-* HTTP 请求头名称枚举。"""
+
+    SESSION_ID = "X-Hermes-Session-Id"  # 会话 ID，用于恢复对话历史
+    USER_ID = "X-Hermes-User-ID"  # 用户 ID，未提供时自动生成游客 ID
+    DEVICE_PLATFORM = (
+        "X-Hermes-Device-Platform"  # 设备平台（iOS/Android/macOS/Windows）
+    )
+    DEVICE_OS_VERSION = "X-Hermes-Device-OS-Version"  # 设备操作系统版本
+    CLIENT_NAME = "X-Hermes-Client-Name"  # 客户端名称标识
+    # 设备指纹请求头，用于游客身份识别。
+    # 客户端应生成一个持久的设备 UUID 并通过此请求头发送，
+    # 以确保即使 session_id 变化，同一设备也能被识别为同一游客。
+    FINGERPRINT = "X-Hermes-Fingerprint"
+
 
 try:
     from aiohttp import ClientSession, ClientTimeout, web
@@ -258,20 +276,22 @@ class ResponseStore:
 
 
 # ---------------------------------------------------------------------------
-# CORS middleware
+# CORS 中间件
 # ---------------------------------------------------------------------------
 
+# 注意：已移除向后兼容的请求头（X-Device-Platform、X-Device-OS-Version、
+# X-Client-Name）。仅支持标准的 X-Hermes-* 格式请求头。
+# 客户端必须迁移到新的请求头格式。
 _CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-Hermes-Device-Platform, X-Device-Platform, X-Hermes-Device-OS-Version, X-Device-OS-Version, X-Hermes-Client-Name, X-Client-Name",
+    "Access-Control-Allow-Headers": f"Authorization, Content-Type, Idempotency-Key, {HermesHeader.DEVICE_PLATFORM}, {HermesHeader.DEVICE_OS_VERSION}, {HermesHeader.CLIENT_NAME}, {HermesHeader.FINGERPRINT}",
 }
 
-_DEVICE_PLATFORM_HEADERS = ("X-Hermes-Device-Platform", "X-Device-Platform")
-_DEVICE_OS_VERSION_HEADERS = (
-    "X-Hermes-Device-OS-Version",
-    "X-Device-OS-Version",
-)
-_CLIENT_NAME_HEADERS = ("X-Hermes-Client-Name", "X-Client-Name")
+# 设备上下文请求头列表 - 仅接受标准的 X-Hermes-* 格式。
+# 此前支持的向后兼容别名（X-Device-*、X-Client-*）已被移除，以保持一致性。
+_DEVICE_PLATFORM_HEADERS = (HermesHeader.DEVICE_PLATFORM,)
+_DEVICE_OS_VERSION_HEADERS = (HermesHeader.DEVICE_OS_VERSION,)
+_CLIENT_NAME_HEADERS = (HermesHeader.CLIENT_NAME,)
 
 _DEVICE_PLATFORM_ALIASES = {
     "ios": "iOS",
@@ -331,6 +351,55 @@ def _header_value(request: "web.Request", names: tuple[str, ...]) -> Optional[st
         if value:
             return value
     return None
+
+
+def _generate_device_fingerprint(request: "web.Request") -> str:
+    """
+    从请求头生成设备指纹。
+
+    优先级：
+    1. X-Hermes-Fingerprint 请求头（客户端提供，最可靠）
+    2. 从 User-Agent + Accept-Language + IP 派生（服务端降级方案）
+
+    这使得即使 X-Hermes-Session-Id 变化，也能在跨会话间保持用户识别的一致性。
+    """
+    import hashlib
+
+    # 优先级 1：客户端提供的指纹（最可靠，建议客户端使用 localStorage/Keychain 持久化存储 UUID）
+    client_fingerprint = request.headers.get(HermesHeader.FINGERPRINT, "").strip()
+    if client_fingerprint:
+        return hashlib.sha256(client_fingerprint.encode()).hexdigest()[:16]
+
+    # 优先级 2：服务端派生的指纹
+    # 组合多个信号以提高唯一性（注意：此方案在以下情况会失效：VPN 切换、浏览器升级、移动网络 IP 变动）
+    peer_ip = request.remote or ""  # 客户端 IP 地址
+    user_agent = request.headers.get("User-Agent", "")  # 浏览器/应用标识
+    accept_lang = request.headers.get("Accept-Language", "")  # 语言偏好
+    accept_encoding = request.headers.get("Accept-Encoding", "")  # 支持的压缩编码
+
+    # 组合成特征字符串
+    fingerprint_data = f"{peer_ip}:{user_agent}:{accept_lang}:{accept_encoding}"
+
+    # 生成 SHA256 哈希并截取前 16 位（平衡唯一性和可读性）
+    return hashlib.sha256(fingerprint_data.encode()).hexdigest()[:16]
+
+
+def _get_or_create_user_id(request: "web.Request") -> str:
+    """
+    从请求头获取用户 ID 或基于设备指纹生成游客 ID。
+
+    如果提供了 X-Hermes-User-ID，直接使用（适用于已登录用户）。
+    否则基于设备指纹生成游客 ID，确保同一设备在跨会话间获得相同的游客 ID。
+    """
+    # 检查是否显式提供了用户 ID（登录用户场景）
+    explicit_user_id = request.headers.get(HermesHeader.USER_ID, "").strip()
+    if explicit_user_id:
+        return explicit_user_id
+
+    # 未提供用户 ID，基于设备指纹生成游客 ID（游客场景）
+    # 格式：guest_<16位哈希>，便于日志识别和后续分析
+    fingerprint = _generate_device_fingerprint(request)
+    return f"guest_{fingerprint}"
 
 
 def _infer_platform_from_user_agent(user_agent: Optional[str]) -> Optional[str]:
@@ -721,11 +790,11 @@ class APIServerAdapter(BasePlatformAdapter):
             lower = name.lower()
             if lower in {"host", "content-length", "authorization"}:
                 continue
-            if lower == "x-hermes-session-id":
+            if lower == HermesHeader.SESSION_ID.lower():
                 continue
             headers[name] = value
         if session_id:
-            headers["X-Hermes-Session-Id"] = session_id
+            headers[HermesHeader.SESSION_ID] = session_id
         backend_key = backend.get("api_key")
         if backend_key:
             headers["Authorization"] = f"Bearer {backend_key}"
@@ -783,9 +852,9 @@ class APIServerAdapter(BasePlatformAdapter):
                 payload = {"raw": text}
             payload = self._rewrite_router_response_payload(backend, payload)
             response_headers: Dict[str, str] = {}
-            raw_session_id = resp.headers.get("X-Hermes-Session-Id")
+            raw_session_id = resp.headers.get(HermesHeader.SESSION_ID)
             if raw_session_id:
-                response_headers["X-Hermes-Session-Id"] = self._make_public_token(
+                response_headers[HermesHeader.SESSION_ID] = self._make_public_token(
                     backend["alias"], raw_session_id
                 )
             return web.json_response(
@@ -818,9 +887,9 @@ class APIServerAdapter(BasePlatformAdapter):
                 "X-Accel-Buffering", "no"
             ),
         }
-        raw_session_id = backend_response.headers.get("X-Hermes-Session-Id")
+        raw_session_id = backend_response.headers.get(HermesHeader.SESSION_ID)
         if raw_session_id:
-            response_headers["X-Hermes-Session-Id"] = self._make_public_token(
+            response_headers[HermesHeader.SESSION_ID] = self._make_public_token(
                 backend["alias"], raw_session_id
             )
 
@@ -1181,7 +1250,7 @@ class APIServerAdapter(BasePlatformAdapter):
         if self._router_enabled():
             backend, raw_session_id, _, routing_error = self._resolve_router_backend(
                 model=body.get("model"),
-                session_token=request.headers.get("X-Hermes-Session-Id", "").strip()
+                session_token=request.headers.get(HermesHeader.SESSION_ID, "").strip()
                 or None,
             )
             if routing_error:
@@ -1460,7 +1529,7 @@ class APIServerAdapter(BasePlatformAdapter):
         }
 
         return web.json_response(
-            response_data, headers={"X-Hermes-Session-Id": session_id}
+            response_data, headers={HermesHeader.SESSION_ID: session_id}
         )
 
     async def _write_sse_chat_completion(
@@ -1494,7 +1563,7 @@ class APIServerAdapter(BasePlatformAdapter):
         if cors:
             sse_headers.update(cors)
         if session_id:
-            sse_headers["X-Hermes-Session-Id"] = session_id
+            sse_headers[HermesHeader.SESSION_ID] = session_id
         response = web.StreamResponse(status=200, headers=sse_headers)
         await response.prepare(request)
 

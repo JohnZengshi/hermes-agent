@@ -8,3 +8,7 @@ platforms:
       host: 0.0.0.0
       port: 8643
       key: "${API_KEY}"
+
+model:
+  default: minimax-m2.7
+  provider: opencode-go
