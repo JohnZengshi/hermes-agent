@@ -171,6 +171,26 @@ class TestGatewayConfigRoundtrip:
 
 
 class TestLoadGatewayConfig:
+    def test_expands_env_vars_in_platform_extra_config(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir()
+        config_path = hermes_home / "config.yaml"
+        config_path.write_text(
+            "platforms:\n"
+            "  api_server:\n"
+            "    enabled: true\n"
+            "    extra:\n"
+            "      key: ${ROUTER_API_KEY}\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        monkeypatch.setenv("ROUTER_API_KEY", "router-secret-123")
+
+        config = load_gateway_config()
+
+        assert config.platforms[Platform.API_SERVER].extra["key"] == "router-secret-123"
+
     def test_bridges_quick_commands_from_config_yaml(self, tmp_path, monkeypatch):
         hermes_home = tmp_path / ".hermes"
         hermes_home.mkdir()

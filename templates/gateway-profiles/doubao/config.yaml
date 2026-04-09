@@ -1,0 +1,20 @@
+# Generated from project template.
+# Edit templates/gateway-profiles/doubao/config.yaml, then resync.
+
+platforms:
+  api_server:
+    enabled: true
+    extra:
+      host: 0.0.0.0
+      port: 8644
+      key: "${API_KEY}"
+
+model:
+  default: minimax-m2.5-free
+  provider: opencode-zen
+
+platform_toolsets:
+  api_server:
+    - browser
+    - memory
+    - skills_list
