@@ -1,81 +1,198 @@
-# Local gateway profiles
+# 本地网关配置
 
-This repo treats the three local gateway profiles as project-owned templates, while `~/.hermes/profiles/*` remains runtime state.
+本仓库将三个本地网关 profile 作为项目管理的模板，`~/.hermes/profiles/*` 为运行时状态。
 
-## Source of truth
+## 目录结构
 
-- `templates/gateway-profiles/hermes/`
-- `templates/gateway-profiles/doubao/`
-- `templates/gateway-profiles/router/`
+```
+templates/gateway-profiles/
+├── hermes/          # 主力 backend（端口 8643）
+│   ├── config.yaml
+│   ├── SOUL.md
+│   ├── .env
+│   └── .env.example
+├── doubao/          # 豆包 backend（端口 8644，kimi-k2.5 / opencode-go）
+│   ├── config.yaml
+│   ├── SOUL.md
+│   ├── .env
+│   └── .env.example
+└── router/          # 智能路由（端口 8645）
+    ├── config.yaml
+    ├── SOUL.md
+    ├── .env
+    └── .env.example
+```
 
-Each template directory contains the tracked `config.yaml`, `SOUL.md`, `.env`, and `.env.example`.
+## 源配置（Source of Truth）
 
-### Per-profile environment variables
+模板目录包含 `config.yaml`、`SOUL.md`、`.env`、`.env.example`。
 
-| Profile | `.env` variables | Purpose |
-|---------|-------------------|---------|
-| hermes | `API_KEY` | Hermes backend API key (Kelivo-facing) |
-| doubao | `API_KEY`, `OPENCODE_ZEN_API_KEY` | `API_KEY` for backend auth; `OPENCODE_ZEN_API_KEY` for the opencode-zen / minimax-m2.5-free provider |
-| router | `ROUTER_API_KEY`, `HERMES_BACKEND_API_KEY`, `DOUBAO_BACKEND_API_KEY` | `ROUTER_API_KEY` for Kelivo-facing auth; backend keys must match the corresponding `API_KEY` in hermes and doubao |
+### 环境变量
 
-The committed template `.env` files use blank values (`API_KEY=`) as placeholders. Fill in real secrets locally — they are never committed.
+| Profile | `.env` 变量 | 用途 |
+|---------|-------------|------|
+| hermes | `API_KEY` | Hermes backend API key（Kelivo 对接用） |
+| doubao | `API_KEY`, `OPENCODE_GO_API_KEY` | `API_KEY` 用于网关鉴权；`OPENCODE_GO_API_KEY` 用于 opencode-go / kimi-k2.5 模型调用 |
+| router | `ROUTER_API_KEY`, `HERMES_BACKEND_API_KEY`, `DOUBAO_BACKEND_API_KEY` | `ROUTER_API_KEY` 用于 Kelivo 鉴权；后端密钥需与 hermes 和 doubao 的 `API_KEY` 一致 |
 
-`.env.example` files mirror `.env` with the same keys and blank values, serving as a reference for new setups.
+模板 `.env` 使用空值占位（如 `API_KEY=`），实际密钥本地填写，不提交到仓库。
 
-### config.yaml placeholders
+`.env.example` 与 `.env` 结构一致，供新部署参考。
 
-Template `config.yaml` files use `${VAR}` placeholders that are expanded at load time by `gateway/config.py`:
+### config.yaml 占位符
+
+模板 `config.yaml` 中的 `${VAR}` 占位符在加载时由 `gateway/config.py` 展开：
 
 - `hermes/config.yaml`: `key: "${API_KEY}"`
 - `doubao/config.yaml`: `key: "${API_KEY}"`
-- `router/config.yaml`: `key: "${ROUTER_API_KEY}"`, backend `api_key: "${HERMES_BACKEND_API_KEY}"` / `"${DOUBAO_BACKEND_API_KEY}"`
+- `router/config.yaml`: `key: "${ROUTER_API_KEY}"`，backend `api_key: "${HERMES_BACKEND_API_KEY}"` / `"${DOUBAO_BACKEND_API_KEY}"`
 
-## Runtime materialization
+## 多租户用户隔离
 
-Run:
+Router 和各 backend 的 API server 均支持通过请求头识别用户：
 
-```bash
-./scripts/sync_gateway_profiles.sh
+```
+X-Hermes-User-ID: <用户ID>
 ```
 
-That script overwrites the runtime copies of `config.yaml`, `SOUL.md`, `.env`, and `.env.example` in:
+- 传入 `X-Hermes-User-ID` → agent 按用户 ID 隔离 memory 和 session
+- 未传入 → 网关自动生成 `guest_<指纹>` 作为兜底用户 ID（不建议）
 
-- `~/.hermes/profiles/hermes/`
-- `~/.hermes/profiles/doubao/`
-- `~/.hermes/profiles/router/`
+### 当前隔离范围
 
-It does not delete sessions, logs, skills, databases, or other runtime files.
+| 组件 | 隔离方式 | 说明 |
+|------|----------|------|
+| Memory（记忆） | `memories/<user_id>/memory.db` | 每个 user ID 拥有独立 SQLite 数据库 |
+| Session DB | `sessions` 表的 `user_id` 列 | 会话记录按 user_id 区分 |
+| Skills | 暂未隔离 | 所有用户共享同一套 skills |
 
-Since `.env` is always overwritten from the template, **edit `templates/gateway-profiles/*/.env` and resync** rather than editing runtime copies.
+### Memory 后端
 
-## Startup flow
+Memory 系统支持两种存储后端，通过 `config.yaml` 的 `memory.backend` 配置：
 
-Run:
+```yaml
+memory:
+  backend: sqlite    # 或 file（默认）
+```
+
+| 后端 | 存储 | 适用场景 |
+|------|------|----------|
+| `file`（默认） | `memories/<user_id>/MEMORY.md` + `USER.md` | 用户量少、简单场景 |
+| `sqlite` | `memories/<user_id>/memory.db` | 用户量多、需要原子写入 |
+
+当前 doubao profile 已启用 `sqlite` 后端。
+
+## 启停流程
+
+### 启动
 
 ```bash
 ./start_all_gateways.sh
 ```
 
-The startup script:
+脚本执行顺序：
+1. 同步模板到 `~/.hermes/profiles/*`
+2. 校验各 profile `.env` 中的必填变量
+3. 检查 router 后端密钥与 hermes/doubao 的 `API_KEY` 一致性
+4. 停止已有网关进程
+5. 依次启动三个网关（带 `-v` 开启 INFO 日志）
 
-1. syncs tracked templates into `~/.hermes/profiles/*`,
-2. validates required keys from each profile's synced `.env`,
-3. checks that `HERMES_BACKEND_API_KEY` matches hermes' `API_KEY` and `DOUBAO_BACKEND_API_KEY` matches doubao's `API_KEY`,
-4. stops any running gateway processes,
-5. starts the three gateways.
+所有密钥来自 profile 级 `.env`，不加载项目根目录的 `.env`。
 
-It does **not** load the project root `.env`. All secrets come from the per-profile `.env` files.
-
-## Stopping gateways
+### 停止
 
 ```bash
 ./stop_all_gateways.sh
 ```
 
-This sends a stop signal to each gateway process by profile name.
+按 profile 名称逐一停止网关进程。
 
-## Editing rule
+### 日志
 
-If you want to change profile behavior, edit the files under `templates/gateway-profiles/*` and resync (or restart — `start_all_gateways.sh` syncs automatically).
+网关日志位于 `logs/` 目录：
 
-Do not hand-edit `~/.hermes/profiles/*/config.yaml`, `SOUL.md`, or `.env` unless you intentionally want a temporary local divergence — the next sync will overwrite them.
+```
+logs/hermes.log
+logs/doubao.log
+logs/router.log
+```
+
+启动脚本已加 `-v` 标志，日志级别为 INFO，可追踪以下关键信息：
+- `X-Hermes-User-ID` 请求头解析结果
+- Guest 用户 ID 生成（当缺少请求头时）
+- Memory 目录路径解析
+- Memory 后端初始化
+
+## 编辑规则
+
+修改 profile 行为时，编辑 `templates/gateway-profiles/*` 下的文件，然后重新同步或重启（`start_all_gateways.sh` 会自动同步）。
+
+不要直接编辑 `~/.hermes/profiles/*/config.yaml`、`SOUL.md` 或 `.env`——下次同步会覆盖。
+
+## Kelivo 对接
+
+Kelivo 连接配置：
+
+| 参数 | 值 |
+|------|-----|
+| URL | `http://<IP>:8645` |
+| API Key | `ROUTER_API_KEY` 的值 |
+| Model | `hermes-agent` 或 `doubao-agent` |
+
+**务必在每次请求中携带 `X-Hermes-User-ID` 请求头**，否则会生成 guest 用户目录，导致记忆不隔离。
+
+---
+
+## 待办事项
+
+### 1. 共享 DB + user_id 列
+
+当前每个用户一个独立 `memory.db`（`memories/<user_id>/memory.db`），用户量达到十万级后会产生大量小文件，与原来的 `USER.md`/`MEMORY.md` 方案存在相同目录扩展问题。
+
+**改进方案：** 改为共享数据库 + `user_id` 列：
+
+```sql
+CREATE TABLE memory_entries (
+    user_id  TEXT NOT NULL,
+    target   TEXT NOT NULL,    -- 'memory' 或 'user'
+    position INTEGER NOT NULL,
+    content  TEXT NOT NULL,
+    PRIMARY KEY (user_id, target, position)
+);
+CREATE INDEX idx_memory_user ON memory_entries(user_id, target);
+```
+
+- 所有用户共享一个 `memories.db`（放在 profile 根目录 `~/.hermes/profiles/<name>/memories.db`）
+- 查询时 `WHERE user_id = ?`
+- 避免 inode 耗尽和目录扫描性能问题
+- 需要考虑 guest 用户数据清理策略
+
+### 2. 自定义 Provider 支持
+
+当前 doubao 配置仅支持预定义的 provider（`opencode-go`、`opencode-zen` 等）。需要增加自定义 provider 支持，允许：
+
+- 自定义 API URL（如私有部署的兼容 OpenAI 的推理服务）
+- OpenAI Chat Completions 格式（`/v1/chat/completions`）
+- 用户在 `config.yaml` 中直接指定 `base_url`、`api_key`、`model` 列表
+
+**配置示例：**
+
+```yaml
+model:
+  default: my-custom-model
+  provider: custom-openai
+  custom_providers:
+    custom-openai:
+      base_url: "https://my-inference-server.example.com/v1"
+      api_key_env: MY_CUSTOM_API_KEY
+      transport: openai_chat
+      models:
+        - my-custom-model
+        - my-other-model
+```
+
+需要改动的代码路径：
+- `hermes_cli/auth.py` — 动态注册 provider
+- `hermes_cli/runtime_provider.py` — 解析 `custom_providers` 配置
+- `hermes_cli/models.py` — 合并自定义模型列表
+- `hermes_cli/config.py` — 新增 `model.custom_providers` 配置项

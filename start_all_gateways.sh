@@ -88,7 +88,7 @@ echo "正在启动 Hermes 网关进程..."
 start_gateway() {
     local profile="$1"
     local log_file="$LOG_DIR/$profile.log"
-    HERMES_HOME="$PROFILES_ROOT/$profile" "$PYTHON_PATH" -m hermes_cli.main -p "$profile" gateway run --replace > "$log_file" 2>&1 &
+    HERMES_HOME="$PROFILES_ROOT/$profile" "$PYTHON_PATH" -m hermes_cli.main -p "$profile" gateway run --replace -v > "$log_file" 2>&1 &
     local pid=$!
     echo "$profile:$pid"
 }

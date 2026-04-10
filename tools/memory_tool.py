@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -58,9 +59,9 @@ def get_memory_dir(user_id: Optional[str] = None) -> Path:
     deployments. Otherwise returns the global memories directory.
     """
     base_dir = get_hermes_home() / "memories"
-    if user_id:
-        return base_dir / user_id
-    return base_dir
+    result = (base_dir / user_id) if user_id else base_dir
+    logger.info("[memory] get_memory_dir: user_id=%r → %s", user_id, result)
+    return result
 
 
 ENTRY_DELIMITER = "\n§\n"
@@ -136,9 +137,98 @@ class FileMemoryBackend(MemoryBackend):
 
     def _path_for(self, target: str) -> Path:
         mem_dir = get_memory_dir(self._user_id)
-        if target == "user":
-            return mem_dir / "USER.md"
-        return mem_dir / "MEMORY.md"
+        path = mem_dir / ("USER.md" if target == "user" else "MEMORY.md")
+        logger.info(
+            "[memory] FileBackend._path_for: user_id=%r target=%r → %s",
+            self._user_id,
+            target,
+            path,
+        )
+        return path
+
+
+class SQLiteMemoryBackend(MemoryBackend):
+    def __init__(self, user_id: Optional[str] = None):
+        self._user_id = user_id
+        self._transaction_conn: Optional[sqlite3.Connection] = None
+
+    def load_entries(self, target: str) -> List[str]:
+        conn, should_close = self._get_connection()
+        try:
+            self._ensure_schema(conn)
+            rows = conn.execute(
+                "SELECT content FROM memory_entries WHERE target = ? ORDER BY position ASC",
+                (target,),
+            ).fetchall()
+            return [row[0] for row in rows if row and row[0]]
+        except sqlite3.Error:
+            return []
+        finally:
+            if should_close:
+                conn.close()
+
+    def save_entries(self, target: str, entries: List[str]):
+        conn, should_close = self._get_connection()
+        try:
+            self._ensure_schema(conn)
+            if should_close:
+                conn.execute("BEGIN IMMEDIATE")
+            conn.execute("DELETE FROM memory_entries WHERE target = ?", (target,))
+            conn.executemany(
+                "INSERT INTO memory_entries(target, position, content) VALUES (?, ?, ?)",
+                [(target, index, entry) for index, entry in enumerate(entries)],
+            )
+            if should_close:
+                conn.commit()
+        except sqlite3.Error as e:
+            if should_close:
+                conn.rollback()
+            raise RuntimeError(
+                f"Failed to write sqlite memory entries for {target}: {e}"
+            )
+        finally:
+            if should_close:
+                conn.close()
+
+    @contextmanager
+    def transaction(self, target: str):
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            self._transaction_conn = conn
+            yield
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            self._transaction_conn = None
+            conn.close()
+
+    def _db_path(self) -> Path:
+        path = get_memory_dir(self._user_id) / "memory.db"
+        logger.info(
+            "[memory] SQLiteBackend._db_path: user_id=%r → %s", self._user_id, path
+        )
+        return path
+
+    def _connect(self) -> sqlite3.Connection:
+        db_path = self._db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path), timeout=30, isolation_level=None)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+
+    def _get_connection(self) -> tuple[sqlite3.Connection, bool]:
+        if self._transaction_conn is not None:
+            return self._transaction_conn, False
+        return self._connect(), True
+
+    @staticmethod
+    def _ensure_schema(conn: sqlite3.Connection):
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS memory_entries (target TEXT NOT NULL, position INTEGER NOT NULL, content TEXT NOT NULL, PRIMARY KEY (target, position))"
+        )
 
 
 # ---------------------------------------------------------------------------

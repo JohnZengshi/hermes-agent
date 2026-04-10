@@ -6,6 +6,7 @@ from pathlib import Path
 
 from tools.memory_tool import (
     MemoryStore,
+    SQLiteMemoryBackend,
     memory_tool,
     _scan_memory_content,
     ENTRY_DELIMITER,
@@ -215,6 +216,60 @@ class TestMemoryStorePersistence:
         store = MemoryStore()
         store.load_from_disk()
         assert len(store.memory_entries) == 2
+
+
+class TestSQLiteMemoryBackend:
+    def test_roundtrip(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "tools.memory_tool.get_memory_dir",
+            lambda user_id=None: tmp_path / (user_id or "global"),
+        )
+
+        backend = SQLiteMemoryBackend()
+        backend.save_entries("memory", ["fact A", "fact B"])
+
+        assert backend.load_entries("memory") == ["fact A", "fact B"]
+
+    def test_overwrite(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "tools.memory_tool.get_memory_dir",
+            lambda user_id=None: tmp_path / (user_id or "global"),
+        )
+
+        backend = SQLiteMemoryBackend()
+        backend.save_entries("user", ["Alice", "Developer"])
+        backend.save_entries("user", ["Bob"])
+
+        assert backend.load_entries("user") == ["Bob"]
+
+    def test_user_scoped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "tools.memory_tool.get_memory_dir",
+            lambda user_id=None: tmp_path / (user_id or "global"),
+        )
+
+        alice_backend = SQLiteMemoryBackend(user_id="alice")
+        bob_backend = SQLiteMemoryBackend(user_id="bob")
+        alice_backend.save_entries("user", ["likes iPhone"])
+        bob_backend.save_entries("user", ["likes Android"])
+
+        assert alice_backend.load_entries("user") == ["likes iPhone"]
+        assert bob_backend.load_entries("user") == ["likes Android"]
+
+    def test_memory_store_with_sqlite_backend(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "tools.memory_tool.get_memory_dir",
+            lambda user_id=None: tmp_path / (user_id or "global"),
+        )
+
+        store = MemoryStore(backend=SQLiteMemoryBackend(), memory_char_limit=500)
+        store.load_from_disk()
+        store.add("memory", "persistent sqlite fact")
+
+        reloaded = MemoryStore(backend=SQLiteMemoryBackend(), memory_char_limit=500)
+        reloaded.load_from_disk()
+
+        assert "persistent sqlite fact" in reloaded.memory_entries
 
 
 class TestMemoryStoreSnapshot:

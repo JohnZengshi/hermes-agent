@@ -394,12 +394,23 @@ def _get_or_create_user_id(request: "web.Request") -> str:
     # 检查是否显式提供了用户 ID（登录用户场景）
     explicit_user_id = request.headers.get(HermesHeader.USER_ID, "").strip()
     if explicit_user_id:
+        logger.info(
+            "[api_server] user_id resolution: explicit=%r → %s",
+            explicit_user_id,
+            explicit_user_id,
+        )
         return explicit_user_id
 
     # 未提供用户 ID，基于设备指纹生成游客 ID（游客场景）
     # 格式：guest_<16位哈希>，便于日志识别和后续分析
     fingerprint = _generate_device_fingerprint(request)
-    return f"guest_{fingerprint}"
+    guest_id = f"guest_{fingerprint}"
+    logger.info(
+        "[api_server] user_id resolution: no header, fingerprint=%r → %s",
+        fingerprint,
+        guest_id,
+    )
+    return guest_id
 
 
 def _infer_platform_from_user_agent(user_agent: Optional[str]) -> Optional[str]:
@@ -1328,7 +1339,13 @@ class APIServerAdapter(BasePlatformAdapter):
         # only allowed when the API key is configured and the request is
         # authenticated.  Without this gate, any unauthenticated client could
         # read arbitrary session history by guessing/enumerating session IDs.
-        provided_session_id = request.headers.get("X-Hermes-Session-Id", "").strip()
+        provided_session_id = request.headers.get(HermesHeader.SESSION_ID, "").strip()
+        user_id = _get_or_create_user_id(request)
+        logger.info(
+            "[api_server] /v1/chat/completions: session_id=%r user_id=%r",
+            provided_session_id or "(auto)",
+            user_id,
+        )
         if provided_session_id:
             if not self._api_key:
                 logger.warning(
@@ -2355,6 +2372,13 @@ class APIServerAdapter(BasePlatformAdapter):
 
         # Run the agent (with Idempotency-Key support)
         session_id = str(uuid.uuid4())
+        user_id = request.headers.get(HermesHeader.USER_ID, "").strip() or None
+        logger.info(
+            "[api_server] /v1/responses: session_id=%r user_id=%r (header=%r)",
+            session_id,
+            user_id,
+            request.headers.get(HermesHeader.USER_ID, ""),
+        )
 
         stream = bool(body.get("stream", False))
         if stream:
@@ -2451,6 +2475,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 conversation_history=conversation_history,
                 ephemeral_system_prompt=instructions,
                 session_id=session_id,
+                user_id=user_id,
             )
 
         idempotency_key = request.headers.get("Idempotency-Key")
@@ -2975,6 +3000,9 @@ class APIServerAdapter(BasePlatformAdapter):
         loop = asyncio.get_event_loop()
 
         def _run():
+            logger.info(
+                "[api_server] _run_agent: session_id=%r user_id=%r", session_id, user_id
+            )
             agent = self._create_agent(
                 ephemeral_system_prompt=ephemeral_system_prompt,
                 session_id=session_id,
@@ -3211,6 +3239,13 @@ class APIServerAdapter(BasePlatformAdapter):
 
         session_id = body.get("session_id") or run_id
         ephemeral_system_prompt = instructions
+        user_id = request.headers.get(HermesHeader.USER_ID, "").strip() or None
+        logger.info(
+            "[api_server] /v1/runs: session_id=%r user_id=%r (header=%r)",
+            session_id,
+            user_id,
+            request.headers.get(HermesHeader.USER_ID, ""),
+        )
 
         async def _run_and_close():
             try:
@@ -3219,6 +3254,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     session_id=session_id,
                     stream_delta_callback=_text_cb,
                     tool_progress_callback=event_cb,
+                    user_id=user_id,
                 )
 
                 def _run_sync():

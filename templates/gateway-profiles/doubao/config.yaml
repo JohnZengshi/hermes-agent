@@ -1,6 +1,8 @@
 # Generated from project template.
 # Edit templates/gateway-profiles/doubao/config.yaml, then resync.
 
+verbose: 1
+
 platforms:
   api_server:
     enabled: true
@@ -10,11 +12,12 @@ platforms:
       key: "${API_KEY}"
 
 model:
-  default: minimax-m2.7
+  default: kimi-k2.5
   provider: opencode-go
 
 memory:
   memory_enabled: true
+  backend: sqlite
   user_profile_enabled: true
   nudge_interval: 3
 
