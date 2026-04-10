@@ -17,6 +17,7 @@ from tools.memory_tool import (
 # Tool schema guidance
 # =========================================================================
 
+
 class TestMemorySchema:
     def test_discourages_diary_style_task_logs(self):
         description = MEMORY_SCHEMA["description"]
@@ -30,6 +31,7 @@ class TestMemorySchema:
 # =========================================================================
 # Security scanning
 # =========================================================================
+
 
 class TestScanMemoryContent:
     def test_clean_content_passes(self):
@@ -89,10 +91,13 @@ class TestScanMemoryContent:
 # MemoryStore core operations
 # =========================================================================
 
+
 @pytest.fixture()
 def store(tmp_path, monkeypatch):
     """Create a MemoryStore with temp storage."""
-    monkeypatch.setattr("tools.memory_tool.get_memory_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        "tools.memory_tool.get_memory_dir", lambda user_id=None: tmp_path
+    )
     s = MemoryStore(memory_char_limit=500, user_char_limit=300)
     s.load_from_disk()
     return s
@@ -185,7 +190,9 @@ class TestMemoryStoreRemove:
 
 class TestMemoryStorePersistence:
     def test_save_and_load_roundtrip(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.memory_tool.get_memory_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            "tools.memory_tool.get_memory_dir", lambda user_id=None: tmp_path
+        )
 
         store1 = MemoryStore()
         store1.load_from_disk()
@@ -198,7 +205,9 @@ class TestMemoryStorePersistence:
         assert "Alice, developer" in store2.user_entries
 
     def test_deduplication_on_load(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("tools.memory_tool.get_memory_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            "tools.memory_tool.get_memory_dir", lambda user_id=None: tmp_path
+        )
         # Write file with duplicates
         mem_file = tmp_path / "MEMORY.md"
         mem_file.write_text("duplicate entry\n§\nduplicate entry\n§\nunique entry")
@@ -230,6 +239,7 @@ class TestMemoryStoreSnapshot:
 # memory_tool() dispatcher
 # =========================================================================
 
+
 class TestMemoryToolDispatcher:
     def test_no_store_returns_error(self):
         result = json.loads(memory_tool(action="add", content="test"))
@@ -237,7 +247,9 @@ class TestMemoryToolDispatcher:
         assert "not available" in result["error"]
 
     def test_invalid_target(self, store):
-        result = json.loads(memory_tool(action="add", target="invalid", content="x", store=store))
+        result = json.loads(
+            memory_tool(action="add", target="invalid", content="x", store=store)
+        )
         assert result["success"] is False
 
     def test_unknown_action(self, store):
@@ -245,7 +257,9 @@ class TestMemoryToolDispatcher:
         assert result["success"] is False
 
     def test_add_via_tool(self, store):
-        result = json.loads(memory_tool(action="add", target="memory", content="via tool", store=store))
+        result = json.loads(
+            memory_tool(action="add", target="memory", content="via tool", store=store)
+        )
         assert result["success"] is True
 
     def test_replace_requires_old_text(self, store):

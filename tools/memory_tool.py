@@ -66,6 +66,81 @@ def get_memory_dir(user_id: Optional[str] = None) -> Path:
 ENTRY_DELIMITER = "\n§\n"
 
 
+class MemoryBackend:
+    def load_entries(self, target: str) -> List[str]:
+        raise NotImplementedError
+
+    def save_entries(self, target: str, entries: List[str]):
+        raise NotImplementedError
+
+    @contextmanager
+    def transaction(self, target: str):
+        raise NotImplementedError
+
+
+class FileMemoryBackend(MemoryBackend):
+    def __init__(self, user_id: Optional[str] = None):
+        self._user_id = user_id
+
+    def load_entries(self, target: str) -> List[str]:
+        path = self._path_for(target)
+        if not path.exists():
+            return []
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, IOError):
+            return []
+
+        if not raw.strip():
+            return []
+
+        entries = [entry.strip() for entry in raw.split(ENTRY_DELIMITER)]
+        return [entry for entry in entries if entry]
+
+    def save_entries(self, target: str, entries: List[str]):
+        path = self._path_for(target)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = ENTRY_DELIMITER.join(entries) if entries else ""
+        try:
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(path.parent), suffix=".tmp", prefix=".mem_"
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(content)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, str(path))
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        except (OSError, IOError) as e:
+            raise RuntimeError(f"Failed to write memory file {path}: {e}")
+
+    @contextmanager
+    def transaction(self, target: str):
+        lock_path = self._path_for(target).with_suffix(
+            self._path_for(target).suffix + ".lock"
+        )
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = open(lock_path, "w")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            fd.close()
+
+    def _path_for(self, target: str) -> Path:
+        mem_dir = get_memory_dir(self._user_id)
+        if target == "user":
+            return mem_dir / "USER.md"
+        return mem_dir / "MEMORY.md"
+
+
 # ---------------------------------------------------------------------------
 # Memory content scanning — lightweight check for injection/exfiltration
 # in content that gets injected into the system prompt.
@@ -144,22 +219,23 @@ class MemoryStore:
         memory_char_limit: int = 2200,
         user_char_limit: int = 1375,
         user_id: Optional[str] = None,
+        backend: Optional[MemoryBackend] = None,
     ):
         self.memory_entries: List[str] = []
         self.user_entries: List[str] = []
         self.memory_char_limit = memory_char_limit
         self.user_char_limit = user_char_limit
         self._user_id = user_id
+        self._backend = backend or FileMemoryBackend(user_id=user_id)
         # Frozen snapshot for system prompt -- set once at load_from_disk()
         self._system_prompt_snapshot: Dict[str, str] = {"memory": "", "user": ""}
 
     def load_from_disk(self):
         """Load entries from MEMORY.md and USER.md, capture system prompt snapshot."""
-        mem_dir = get_memory_dir(self._user_id)
-        mem_dir.mkdir(parents=True, exist_ok=True)
+        get_memory_dir(self._user_id).mkdir(parents=True, exist_ok=True)
 
-        self.memory_entries = self._read_file(mem_dir / "MEMORY.md")
-        self.user_entries = self._read_file(mem_dir / "USER.md")
+        self.memory_entries = self._backend.load_entries("memory")
+        self.user_entries = self._backend.load_entries("user")
 
         # Deduplicate entries (preserves order, keeps first occurrence)
         self.memory_entries = list(dict.fromkeys(self.memory_entries))
@@ -171,62 +247,18 @@ class MemoryStore:
             "user": self._render_block("user", self.user_entries),
         }
 
-    @staticmethod
-    @contextmanager
-    def _file_lock(path: Path):
-        """Acquire an exclusive file lock for read-modify-write safety.
-
-        Uses a separate .lock file so the memory file itself can still be
-        atomically replaced via os.replace().
-        """
-        lock_path = path.with_suffix(path.suffix + ".lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if fcntl is None and msvcrt is None:
-            yield
-            return
-
-        if msvcrt and (not lock_path.exists() or lock_path.stat().st_size == 0):
-            lock_path.write_text(" ", encoding="utf-8")
-
-        fd = open(lock_path, "r+" if msvcrt else "a+")
-        try:
-            if fcntl:
-                fcntl.flock(fd, fcntl.LOCK_EX)
-            else:
-                fd.seek(0)
-                msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
-            yield
-        finally:
-            if fcntl:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            elif msvcrt:
-                try:
-                    fd.seek(0)
-                    msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
-                except (OSError, IOError):
-                    pass
-            fd.close()
-
-    def _path_for(self, target: str) -> Path:
-        mem_dir = get_memory_dir(self._user_id)
-        if target == "user":
-            return mem_dir / "USER.md"
-        return mem_dir / "MEMORY.md"
-
     def _reload_target(self, target: str):
         """Re-read entries from disk into in-memory state.
 
         Called under file lock to get the latest state before mutating.
         """
-        fresh = self._read_file(self._path_for(target))
+        fresh = self._backend.load_entries(target)
         fresh = list(dict.fromkeys(fresh))  # deduplicate
         self._set_entries(target, fresh)
 
     def save_to_disk(self, target: str):
         """Persist entries to the appropriate file. Called after every mutation."""
-        get_memory_dir(self._user_id).mkdir(parents=True, exist_ok=True)
-        self._write_file(self._path_for(target), self._entries_for(target))
+        self._backend.save_entries(target, self._entries_for(target))
 
     def _entries_for(self, target: str) -> List[str]:
         if target == "user":
@@ -261,7 +293,7 @@ class MemoryStore:
         if scan_error:
             return {"success": False, "error": scan_error}
 
-        with self._file_lock(self._path_for(target)):
+        with self._backend.transaction(target):
             # Re-read from disk under lock to pick up writes from other sessions
             self._reload_target(target)
 
@@ -314,7 +346,7 @@ class MemoryStore:
         if scan_error:
             return {"success": False, "error": scan_error}
 
-        with self._file_lock(self._path_for(target)):
+        with self._backend.transaction(target):
             self._reload_target(target)
 
             entries = self._entries_for(target)
@@ -366,7 +398,7 @@ class MemoryStore:
         if not old_text:
             return {"success": False, "error": "old_text cannot be empty."}
 
-        with self._file_lock(self._path_for(target)):
+        with self._backend.transaction(target):
             self._reload_target(target)
 
             entries = self._entries_for(target)
@@ -449,59 +481,6 @@ class MemoryStore:
 
         separator = "═" * 46
         return f"{separator}\n{header}\n{separator}\n{content}"
-
-    @staticmethod
-    def _read_file(path: Path) -> List[str]:
-        """Read a memory file and split into entries.
-
-        No file locking needed: _write_file uses atomic rename, so readers
-        always see either the previous complete file or the new complete file.
-        """
-        if not path.exists():
-            return []
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except (OSError, IOError):
-            return []
-
-        if not raw.strip():
-            return []
-
-        # Use ENTRY_DELIMITER for consistency with _write_file. Splitting by "§"
-        # alone would incorrectly split entries that contain "§" in their content.
-        entries = [e.strip() for e in raw.split(ENTRY_DELIMITER)]
-        return [e for e in entries if e]
-
-    @staticmethod
-    def _write_file(path: Path, entries: List[str]):
-        """Write entries to a memory file using atomic temp-file + rename.
-
-        Previous implementation used open("w") + flock, but "w" truncates the
-        file *before* the lock is acquired, creating a race window where
-        concurrent readers see an empty file. Atomic rename avoids this:
-        readers always see either the old complete file or the new one.
-        """
-        content = ENTRY_DELIMITER.join(entries) if entries else ""
-        try:
-            # Write to temp file in same directory (same filesystem for atomic rename)
-            fd, tmp_path = tempfile.mkstemp(
-                dir=str(path.parent), suffix=".tmp", prefix=".mem_"
-            )
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(content)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_path, str(path))  # Atomic on same filesystem
-            except BaseException:
-                # Clean up temp file on any failure
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-        except (OSError, IOError) as e:
-            raise RuntimeError(f"Failed to write memory file {path}: {e}")
 
 
 def memory_tool(
