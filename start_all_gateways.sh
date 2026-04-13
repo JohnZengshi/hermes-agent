@@ -73,12 +73,14 @@ validate_matching_backend_key() {
 
 validate_profile_env hermes API_KEY
 validate_profile_env doubao API_KEY OPENCODE_GO_API_KEY
-validate_profile_env router ROUTER_API_KEY HERMES_BACKEND_API_KEY DOUBAO_BACKEND_API_KEY
+validate_profile_env codecraft API_KEY OPENCODE_GO_API_KEY
+validate_profile_env router ROUTER_API_KEY HERMES_BACKEND_API_KEY DOUBAO_BACKEND_API_KEY CODECRAFT_BACKEND_API_KEY
 
 validate_matching_backend_key hermes HERMES_BACKEND_API_KEY
 validate_matching_backend_key doubao DOUBAO_BACKEND_API_KEY
+validate_matching_backend_key codecraft CODECRAFT_BACKEND_API_KEY
 
-for profile in hermes doubao router; do
+for profile in hermes doubao codecraft router; do
     pkill -f "hermes_cli.main -p $profile gateway run" 2>/dev/null || true
 done
 sleep 2
@@ -101,11 +103,16 @@ DOUBAO_RESULT="$(start_gateway doubao)"
 DOUBAO_PID="${DOUBAO_RESULT#*:}"
 sleep 3
 
+CODECRAFT_RESULT="$(start_gateway codecraft)"
+CODECRAFT_PID="${CODECRAFT_RESULT#*:}"
+sleep 3
+
 ROUTER_RESULT="$(start_gateway router)"
 ROUTER_PID="${ROUTER_RESULT#*:}"
 
 echo "所有进程已启动:"
 echo "Hermes PID: $HERMES_PID"
 echo "Doubao PID: $DOUBAO_PID"
+echo "CodeCraft PID: $CODECRAFT_PID"
 echo "Router PID: $ROUTER_PID"
 echo "日志已输出至 $LOG_DIR/ 目录"

@@ -22,3 +22,7 @@ platforms:
             model_id: doubao-agent
             base_url: http://127.0.0.1:8644
             api_key: "${DOUBAO_BACKEND_API_KEY}"
+          codecraft:
+            model_id: codecraft-agent
+            base_url: http://127.0.0.1:8646
+            api_key: "${CODECRAFT_BACKEND_API_KEY}"

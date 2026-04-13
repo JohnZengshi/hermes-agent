@@ -1,0 +1,28 @@
+# Generated from project template.
+# Edit templates/gateway-profiles/codecraft/config.yaml, then resync.
+
+verbose: 1
+
+platforms:
+  api_server:
+    enabled: true
+    extra:
+      host: 0.0.0.0
+      port: 8646
+      key: "${API_KEY}"
+
+model:
+  default: kimi-k2.5
+  provider: opencode-go
+
+memory:
+  memory_enabled: true
+  backend: sqlite
+  user_profile_enabled: true
+  nudge_interval: 3
+
+platform_toolsets:
+  api_server:
+    - browser
+    - memory
+    - skills_list

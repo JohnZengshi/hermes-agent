@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEMPLATE_ROOT="$ROOT_DIR/templates/gateway-profiles"
 PROFILES_ROOT="${HOME}/.hermes/profiles"
-PROFILES=(hermes doubao router)
+PROFILES=(hermes doubao codecraft router)
 
 if [ ! -d "$TEMPLATE_ROOT" ]; then
     echo "错误: 未找到 profile 模板目录: $TEMPLATE_ROOT" >&2
