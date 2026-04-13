@@ -1,6 +1,6 @@
 # 本地网关配置
 
-本仓库将四个本地网关 profile 作为项目管理的模板，`~/.hermes/profiles/*` 为运行时状态。
+本仓库将五个本地网关 profile 作为项目管理的模板，`~/.hermes/profiles/*` 为运行时状态。
 
 ## 目录结构
 
@@ -17,6 +17,11 @@ templates/gateway-profiles/
 │   ├── .env
 │   └── .env.example
 ├── codecraft/       # 代码匠 backend（端口 8646，kimi-k2.5 / 自定义 OpenAI 兼容 provider）
+│   ├── config.yaml
+│   ├── SOUL.md
+│   ├── .env
+│   └── .env.example
+├── flora/           # 小花 backend（端口 8647，kimi-k2.5 / opencode-go）
 │   ├── config.yaml
 │   ├── SOUL.md
 │   ├── .env
@@ -39,7 +44,8 @@ templates/gateway-profiles/
 | hermes | `API_KEY` | Hermes backend API key（Kelivo 对接用） |
 | doubao | `API_KEY`, `OPENCODE_GO_API_KEY` | `API_KEY` 用于网关鉴权；`OPENCODE_GO_API_KEY` 用于 opencode-go / kimi-k2.5 模型调用 |
 | codecraft | `API_KEY`, `CODECRAFT_BASE_URL`, `THIRD_PARTY_API_KEY` | `API_KEY` 用于网关鉴权；`CODECRAFT_BASE_URL`/`THIRD_PARTY_API_KEY` 用于任意 OpenAI 兼容第三方模型服务 |
-| router | `ROUTER_API_KEY`, `HERMES_BACKEND_API_KEY`, `DOUBAO_BACKEND_API_KEY`, `CODECRAFT_BACKEND_API_KEY` | `ROUTER_API_KEY` 用于 Kelivo 鉴权；后端密钥需与 hermes、doubao、codecraft 的 `API_KEY` 一致 |
+| flora | `API_KEY`, `OPENCODE_GO_API_KEY` | `API_KEY` 用于网关鉴权；`OPENCODE_GO_API_KEY` 用于 opencode-go / kimi-k2.5 模型调用 |
+| router | `ROUTER_API_KEY`, `HERMES_BACKEND_API_KEY`, `DOUBAO_BACKEND_API_KEY`, `CODECRAFT_BACKEND_API_KEY`, `FLORA_BACKEND_API_KEY` | `ROUTER_API_KEY` 用于 Kelivo 鉴权；后端密钥需与 hermes、doubao、codecraft、flora 的 `API_KEY` 一致 |
 
 模板 `.env` 使用空值占位（如 `API_KEY=`），实际密钥本地填写，不提交到仓库。
 
@@ -52,7 +58,8 @@ templates/gateway-profiles/
 - `hermes/config.yaml`: `key: "${API_KEY}"`
 - `doubao/config.yaml`: `key: "${API_KEY}"`
 - `codecraft/config.yaml`: `key: "${API_KEY}"`
-- `router/config.yaml`: `key: "${ROUTER_API_KEY}"`，backend `api_key: "${HERMES_BACKEND_API_KEY}"` / `"${DOUBAO_BACKEND_API_KEY}"` / `"${CODECRAFT_BACKEND_API_KEY}"`
+- `flora/config.yaml`: `key: "${API_KEY}"`
+- `router/config.yaml`: `key: "${ROUTER_API_KEY}"`，backend `api_key: "${HERMES_BACKEND_API_KEY}"` / `"${DOUBAO_BACKEND_API_KEY}"` / `"${CODECRAFT_BACKEND_API_KEY}"` / `"${FLORA_BACKEND_API_KEY}"`
 
 ## 多租户用户隔离
 
@@ -101,9 +108,9 @@ memory:
 脚本执行顺序：
 1. 同步模板到 `~/.hermes/profiles/*`
 2. 校验各 profile `.env` 中的必填变量
-3. 检查 router 后端密钥与 hermes/doubao/codecraft 的 `API_KEY` 一致性
+3. 检查 router 后端密钥与 hermes/doubao/codecraft/flora 的 `API_KEY` 一致性
 4. 停止已有网关进程
-5. 依次启动四个网关（带 `-v` 开启 INFO 日志）
+5. 依次启动五个网关（带 `-v` 开启 INFO 日志）
 
 所有密钥来自 profile 级 `.env`，不加载项目根目录的 `.env`。
 
@@ -123,6 +130,7 @@ memory:
 logs/hermes.log
 logs/doubao.log
 logs/codecraft.log
+logs/flora.log
 logs/router.log
 ```
 
@@ -146,7 +154,7 @@ Kelivo 连接配置：
 |------|-----|
 | URL | `http://<IP>:8645` |
 | API Key | `ROUTER_API_KEY` 的值 |
-| Model | `hermes-agent` 或 `doubao-agent` 或 `codecraft-agent` |
+| Model | `hermes-agent` 或 `doubao-agent` 或 `codecraft-agent` 或 `flora-agent` |
 
 **务必在每次请求中携带 `X-Hermes-User-ID` 请求头**，否则会生成 guest 用户目录，导致记忆不隔离。
 

@@ -26,3 +26,7 @@ platforms:
             model_id: codecraft-agent
             base_url: http://127.0.0.1:8646
             api_key: "${CODECRAFT_BACKEND_API_KEY}"
+          flora:
+            model_id: flora-agent
+            base_url: http://127.0.0.1:8647
+            api_key: "${FLORA_BACKEND_API_KEY}"

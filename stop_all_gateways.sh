@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-profiles=(hermes doubao codecraft router)
+profiles=(hermes doubao codecraft flora router)
 stopped_any=false
 
 echo "正在停止 Hermes 网关进程..."
