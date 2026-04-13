@@ -12,13 +12,13 @@ platforms:
       key: "${API_KEY}"
 
 model:
-  # default: gpt-5.2-codex
-  # provider: custom
-  # base_url: "${CODECRAFT_BASE_URL}"
-  # api_key: "${THIRD_PARTY_API_KEY}"
-  # api_mode: chat_completions
-  default: kimi-k2.5
-  provider: opencode-go
+  default: gpt-5.2-codex
+  provider: custom
+  base_url: "${CODECRAFT_BASE_URL}"
+  api_key: "${THIRD_PARTY_API_KEY}"
+  api_mode: codex_responses
+  # default: kimi-k2.5
+  # provider: opencode-go
 
 memory:
   memory_enabled: true
