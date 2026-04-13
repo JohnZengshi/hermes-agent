@@ -242,6 +242,23 @@ class TestDeviceContextExtraction:
             "client_name": "AIGT",
         }
 
+    def test_extracts_device_context_from_legacy_header_aliases(self):
+        request = MagicMock()
+        request.headers = {
+            "X-Device-Platform": "android",
+            "X-Device-OS-Version": "14",
+            "X-Client-Name": "LegacyClient",
+            "User-Agent": "LegacyClient",
+        }
+
+        context = _extract_device_context(request, {})
+
+        assert context == {
+            "platform": "Android",
+            "os_version": "14",
+            "client_name": "LegacyClient",
+        }
+
 
 # ---------------------------------------------------------------------------
 # Helpers for HTTP tests
@@ -2099,6 +2116,28 @@ class TestCORS:
             assert "X-Hermes-Client-Name" in allowed
 
     @pytest.mark.asyncio
+    async def test_cors_allows_legacy_alias_headers(self):
+        adapter = _make_adapter(cors_origins=["http://localhost:3000"])
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.options(
+                "/v1/chat/completions",
+                headers={
+                    "Origin": "http://localhost:3000",
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "X-Session-Id, X-User-Id, X-Device-Platform, X-Device-OS-Version, X-Client-Name, X-Fingerprint",
+                },
+            )
+            assert resp.status == 200
+            allowed = resp.headers.get("Access-Control-Allow-Headers", "")
+            assert "X-Session-Id" in allowed
+            assert "X-User-Id" in allowed
+            assert "X-Device-Platform" in allowed
+            assert "X-Device-OS-Version" in allowed
+            assert "X-Client-Name" in allowed
+            assert "X-Fingerprint" in allowed
+
+    @pytest.mark.asyncio
     async def test_cors_sets_vary_origin_header(self):
         adapter = _make_adapter(cors_origins=["http://localhost:3000"])
         app = _create_app(adapter)
@@ -2459,3 +2498,40 @@ class TestSessionIdHeader:
             call_kwargs = mock_run.call_args.kwargs
             assert call_kwargs["conversation_history"] == []
             assert call_kwargs["session_id"] == "some-session"
+
+    @pytest.mark.asyncio
+    async def test_legacy_session_and_user_alias_headers_are_accepted(self, adapter):
+        mock_result = {"final_response": "Continuing!", "messages": [], "api_calls": 1}
+        mock_db = MagicMock()
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "previous message"},
+            {"role": "assistant", "content": "previous reply"},
+        ]
+        adapter._session_db = mock_db
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(
+                adapter, "_run_agent", new_callable=AsyncMock
+            ) as mock_run:
+                mock_run.return_value = (
+                    mock_result,
+                    {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                )
+
+                resp = await cli.post(
+                    "/v1/chat/completions",
+                    headers={
+                        "X-Session-Id": "legacy-session-1",
+                        "X-User-Id": "legacy-user-1",
+                    },
+                    json={
+                        "model": "hermes-agent",
+                        "messages": [{"role": "user", "content": "Continue"}],
+                    },
+                )
+
+            assert resp.status == 200
+            assert resp.headers.get("X-Hermes-Session-Id") == "legacy-session-1"
+            call_kwargs = mock_run.call_args.kwargs
+            assert call_kwargs["session_id"] == "legacy-session-1"
+            assert call_kwargs["user_id"] == "legacy-user-1"

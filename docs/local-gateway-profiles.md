@@ -16,7 +16,7 @@ templates/gateway-profiles/
 │   ├── SOUL.md
 │   ├── .env
 │   └── .env.example
-├── codecraft/       # 代码匠 backend（端口 8646，kimi-k2.5 / opencode-go）
+├── codecraft/       # 代码匠 backend（端口 8646，kimi-k2.5 / 自定义 OpenAI 兼容 provider）
 │   ├── config.yaml
 │   ├── SOUL.md
 │   ├── .env
@@ -38,7 +38,7 @@ templates/gateway-profiles/
 |---------|-------------|------|
 | hermes | `API_KEY` | Hermes backend API key（Kelivo 对接用） |
 | doubao | `API_KEY`, `OPENCODE_GO_API_KEY` | `API_KEY` 用于网关鉴权；`OPENCODE_GO_API_KEY` 用于 opencode-go / kimi-k2.5 模型调用 |
-| codecraft | `API_KEY`, `OPENCODE_GO_API_KEY` | `API_KEY` 用于网关鉴权；`OPENCODE_GO_API_KEY` 用于 opencode-go / kimi-k2.5 模型调用 |
+| codecraft | `API_KEY`, `CODECRAFT_BASE_URL`, `THIRD_PARTY_API_KEY` | `API_KEY` 用于网关鉴权；`CODECRAFT_BASE_URL`/`THIRD_PARTY_API_KEY` 用于任意 OpenAI 兼容第三方模型服务 |
 | router | `ROUTER_API_KEY`, `HERMES_BACKEND_API_KEY`, `DOUBAO_BACKEND_API_KEY`, `CODECRAFT_BACKEND_API_KEY` | `ROUTER_API_KEY` 用于 Kelivo 鉴权；后端密钥需与 hermes、doubao、codecraft 的 `API_KEY` 一致 |
 
 模板 `.env` 使用空值占位（如 `API_KEY=`），实际密钥本地填写，不提交到仓库。

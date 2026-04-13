@@ -73,7 +73,7 @@ validate_matching_backend_key() {
 
 validate_profile_env hermes API_KEY
 validate_profile_env doubao API_KEY OPENCODE_GO_API_KEY
-validate_profile_env codecraft API_KEY OPENCODE_GO_API_KEY
+validate_profile_env codecraft API_KEY CODECRAFT_BASE_URL THIRD_PARTY_API_KEY
 validate_profile_env router ROUTER_API_KEY HERMES_BACKEND_API_KEY DOUBAO_BACKEND_API_KEY CODECRAFT_BACKEND_API_KEY
 
 validate_matching_backend_key hermes HERMES_BACKEND_API_KEY

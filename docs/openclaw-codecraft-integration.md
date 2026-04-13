@@ -23,13 +23,16 @@
 
 1. `templates/gateway-profiles/codecraft/config.yaml`
    - `model.default: kimi-k2.5`
-   - `model.provider: opencode-go`
+   - `model.provider: custom`
+   - `model.base_url: "${CODECRAFT_BASE_URL}"`
+   - `model.api_key: "${THIRD_PARTY_API_KEY}"`
 2. `templates/gateway-profiles/router/config.yaml`
    - 已包含 `codecraft` backend（`model_id: codecraft-agent`）
 3. 环境变量（关键项）
    - `templates/gateway-profiles/codecraft/.env`
      - `API_KEY=88888888`
-     - `OPENCODE_GO_API_KEY=<你的 opencode-go key>`
+     - `CODECRAFT_BASE_URL=<你的第三方 OpenAI 兼容地址，如 https://api.openai.com/v1>`
+     - `THIRD_PARTY_API_KEY=<你的第三方 API key>`
    - `templates/gateway-profiles/router/.env`
      - `ROUTER_API_KEY=88888888`
      - `CODECRAFT_BACKEND_API_KEY=88888888`
@@ -120,7 +123,7 @@ curl -sS "http://<HERMES_HOST>:8645/v1/chat/completions" \
 - 先看本机日志：
   - `logs/router.log`
   - `logs/codecraft.log`
-- 再检查上游模型服务可用性（opencode-go）
+- 再检查上游模型服务可用性（`CODECRAFT_BASE_URL` 指向的第三方服务）
 
 ---
 

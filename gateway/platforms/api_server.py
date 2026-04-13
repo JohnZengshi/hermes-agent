@@ -279,19 +279,72 @@ class ResponseStore:
 # CORS 中间件
 # ---------------------------------------------------------------------------
 
-# 注意：已移除向后兼容的请求头（X-Device-Platform、X-Device-OS-Version、
-# X-Client-Name）。仅支持标准的 X-Hermes-* 格式请求头。
-# 客户端必须迁移到新的请求头格式。
+# 请求头兼容策略：
+# - 优先使用标准 X-Hermes-* 请求头
+# - 同时兼容历史别名与常见第三方命名（X-Device-* / X-Client-* / X-User-* 等）
 _CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": f"Authorization, Content-Type, Idempotency-Key, {HermesHeader.DEVICE_PLATFORM}, {HermesHeader.DEVICE_OS_VERSION}, {HermesHeader.CLIENT_NAME}, {HermesHeader.FINGERPRINT}",
+    "Access-Control-Allow-Headers": ", ".join(
+        [
+            "Authorization",
+            "Content-Type",
+            "Idempotency-Key",
+            HermesHeader.SESSION_ID,
+            HermesHeader.USER_ID,
+            HermesHeader.DEVICE_PLATFORM,
+            HermesHeader.DEVICE_OS_VERSION,
+            HermesHeader.CLIENT_NAME,
+            HermesHeader.FINGERPRINT,
+            "X-Session-Id",
+            "X-User-Id",
+            "X-Device-Platform",
+            "X-Device-OS-Version",
+            "X-Client-Name",
+            "X-Client-Platform",
+            "X-Client-OS-Version",
+            "X-Device-Fingerprint",
+            "X-Fingerprint",
+        ]
+    ),
+    "Access-Control-Expose-Headers": f"{HermesHeader.SESSION_ID}",
 }
 
-# 设备上下文请求头列表 - 仅接受标准的 X-Hermes-* 格式。
-# 此前支持的向后兼容别名（X-Device-*、X-Client-*）已被移除，以保持一致性。
-_DEVICE_PLATFORM_HEADERS = (HermesHeader.DEVICE_PLATFORM,)
-_DEVICE_OS_VERSION_HEADERS = (HermesHeader.DEVICE_OS_VERSION,)
-_CLIENT_NAME_HEADERS = (HermesHeader.CLIENT_NAME,)
+_SESSION_ID_HEADERS = (
+    HermesHeader.SESSION_ID,
+    "X-Session-Id",
+    "X-Session-ID",
+    "Session-Id",
+)
+_USER_ID_HEADERS = (
+    HermesHeader.USER_ID,
+    "X-User-Id",
+    "X-User-ID",
+    "User-Id",
+    "X-UID",
+)
+_FINGERPRINT_HEADERS = (
+    HermesHeader.FINGERPRINT,
+    "X-Device-Fingerprint",
+    "X-Fingerprint",
+    "Device-Fingerprint",
+)
+_DEVICE_PLATFORM_HEADERS = (
+    HermesHeader.DEVICE_PLATFORM,
+    "X-Device-Platform",
+    "X-Client-Platform",
+    "Device-Platform",
+)
+_DEVICE_OS_VERSION_HEADERS = (
+    HermesHeader.DEVICE_OS_VERSION,
+    "X-Device-OS-Version",
+    "X-Client-OS-Version",
+    "Device-OS-Version",
+)
+_CLIENT_NAME_HEADERS = (
+    HermesHeader.CLIENT_NAME,
+    "X-Client-Name",
+    "Client-Name",
+)
 
 _DEVICE_PLATFORM_ALIASES = {
     "ios": "iOS",
@@ -366,7 +419,7 @@ def _generate_device_fingerprint(request: "web.Request") -> str:
     import hashlib
 
     # 优先级 1：客户端提供的指纹（最可靠，建议客户端使用 localStorage/Keychain 持久化存储 UUID）
-    client_fingerprint = request.headers.get(HermesHeader.FINGERPRINT, "").strip()
+    client_fingerprint = _header_value(request, _FINGERPRINT_HEADERS) or ""
     if client_fingerprint:
         return hashlib.sha256(client_fingerprint.encode()).hexdigest()[:16]
 
@@ -392,7 +445,7 @@ def _get_or_create_user_id(request: "web.Request") -> str:
     否则基于设备指纹生成游客 ID，确保同一设备在跨会话间获得相同的游客 ID。
     """
     # 检查是否显式提供了用户 ID（登录用户场景）
-    explicit_user_id = request.headers.get(HermesHeader.USER_ID, "").strip()
+    explicit_user_id = _header_value(request, _USER_ID_HEADERS) or ""
     if explicit_user_id:
         logger.info(
             "[api_server] user_id resolution: explicit=%r → %s",
@@ -1261,8 +1314,7 @@ class APIServerAdapter(BasePlatformAdapter):
         if self._router_enabled():
             backend, raw_session_id, _, routing_error = self._resolve_router_backend(
                 model=body.get("model"),
-                session_token=request.headers.get(HermesHeader.SESSION_ID, "").strip()
-                or None,
+                session_token=_header_value(request, _SESSION_ID_HEADERS) or None,
             )
             if routing_error:
                 return web.json_response(routing_error, status=400)
@@ -1339,7 +1391,7 @@ class APIServerAdapter(BasePlatformAdapter):
         # only allowed when the API key is configured and the request is
         # authenticated.  Without this gate, any unauthenticated client could
         # read arbitrary session history by guessing/enumerating session IDs.
-        provided_session_id = request.headers.get(HermesHeader.SESSION_ID, "").strip()
+        provided_session_id = _header_value(request, _SESSION_ID_HEADERS) or ""
         user_id = _get_or_create_user_id(request)
         logger.info(
             "[api_server] /v1/chat/completions: session_id=%r user_id=%r",
@@ -2372,12 +2424,12 @@ class APIServerAdapter(BasePlatformAdapter):
 
         # Run the agent (with Idempotency-Key support)
         session_id = str(uuid.uuid4())
-        user_id = request.headers.get(HermesHeader.USER_ID, "").strip() or None
+        user_id = _header_value(request, _USER_ID_HEADERS) or None
         logger.info(
             "[api_server] /v1/responses: session_id=%r user_id=%r (header=%r)",
             session_id,
             user_id,
-            request.headers.get(HermesHeader.USER_ID, ""),
+            _header_value(request, _USER_ID_HEADERS) or "",
         )
 
         stream = bool(body.get("stream", False))
@@ -3239,12 +3291,12 @@ class APIServerAdapter(BasePlatformAdapter):
 
         session_id = body.get("session_id") or run_id
         ephemeral_system_prompt = instructions
-        user_id = request.headers.get(HermesHeader.USER_ID, "").strip() or None
+        user_id = _header_value(request, _USER_ID_HEADERS) or None
         logger.info(
             "[api_server] /v1/runs: session_id=%r user_id=%r (header=%r)",
             session_id,
             user_id,
-            request.headers.get(HermesHeader.USER_ID, ""),
+            _header_value(request, _USER_ID_HEADERS) or "",
         )
 
         async def _run_and_close():

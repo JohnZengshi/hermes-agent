@@ -12,6 +12,11 @@ platforms:
       key: "${API_KEY}"
 
 model:
+  # default: gpt-5.2-codex
+  # provider: custom
+  # base_url: "${CODECRAFT_BASE_URL}"
+  # api_key: "${THIRD_PARTY_API_KEY}"
+  # api_mode: chat_completions
   default: kimi-k2.5
   provider: opencode-go
 
@@ -23,6 +28,9 @@ memory:
 
 platform_toolsets:
   api_server:
-    - browser
+    - terminal
+    - process
+    - file
+    - web
     - memory
     - skills_list
