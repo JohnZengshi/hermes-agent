@@ -79,91 +79,31 @@ terminal:
   persistent_shell: false
   docker_mount_cwd_to_workspace: false
   
-  # ==================== 生产安全配置（Production Security） ====================
+  # ==================== Docker 配置说明 ====================
+  #
+  # docker_volumes: 宿主机目录映射到容器
+  #   - 格式: "host_path:container_path[:ro]"
+  #   - 变量展开仅支持 ${VAR} 语法，不支持 ${VAR:-default}
+  #   - 确保 host_path 在宿主机上已存在
+  #
+  # docker_env: 注入到容器内的环境变量（agent 可通过 os.environ 读取）
+  #
+  # 下方安全选项（cap_drop/cap_add/tmpfs/security_opts/log_opts）由
+  # Hermes 代码硬编码管理，config 中填写无效，仅作注释参考。
   
-  # 卷挂载配置（Volume Mounts）
-  # - 第一个挂载: 可写产物目录（宿主机的 workspace 映射到容器 /workspace）
-  # - 第二个挂载: 只读源码目录（宿主机源码映射到容器 /src，ro=read-only）
-  # 
-  # 注意：请根据实际路径修改 SOURCE_CODE_PATH
-  # 示例: /home/hermes/projects:/src:ro
   docker_volumes:
-    - "${HERMES_SANDBOX_WORKSPACE:-/tmp/hermes-workspace}:/workspace"
-    # - "${SOURCE_CODE_PATH}:/src:ro"  # 取消注释并配置实际源码路径
-  
-  # 容器用户（非 root 运行）
-  # 使用官方 python 镜像的默认用户（uid=1000）或自定义
-  # docker_user: "1000:1000"
-  
-  # 安全选项（Security Options）
-  # - no-new-privileges: 禁止容器获取额外权限
-  # - seccomp: 使用默认 seccomp 配置文件（限制系统调用）
-  # - apparmor: 如有 AppArmor 可启用自定义 profile
-  docker_security_opts:
-    - "no-new-privileges:true"
-    # - "seccomp:default"  # 或指向自定义 seccomp 配置文件路径
-    # - "apparmor:hermes-docker-default"  # 如有自定义 AppArmor profile
-  
-  # 网络配置（Network Configuration）
-  # 方案A（推荐-完全隔离）: network_mode=none
-  #   - 容器无法访问任何网络
-  #   - 适用于纯本地计算、无需外网API调用的场景
-  # 
-  # 方案B（受控访问）: 自定义bridge + 出站代理
-  #   - 创建隔离的 Docker 网络
-  #   - 通过 HTTP_PROXY/HTTPS_PROXY 限制出口
-  #   - 在代理层实现域名/IP白名单
-  #
-  # 取消下方注释选择方案A（完全隔离）:
-  # docker_network_mode: "none"
-  #
-  # 或配置自定义网络（方案B，需在下方配置代理）:
-  # docker_network: "hermes-sandbox-net"
+    - "/tmp/hermes-workspace:/workspace"
+    # - "/path/to/source:/src:ro"  # 取消注释并配置实际源码路径
   
   # 环境变量（Environment Variables）
-  # 用于传递代理配置、时区、Python 设置等
   docker_env:
-    # 时区设置
     TZ: "Asia/Shanghai"
-    # Python 优化
     PYTHONDONTWRITEBYTECODE: "1"
     PYTHONUNBUFFERED: "1"
-    # 代理配置（如需受控外网访问，取消下方注释并指向代理）
+    # 代理配置（如需受控外网访问，取消下方注释）
     # HTTP_PROXY: "http://proxy.example.com:8080"
     # HTTPS_PROXY: "http://proxy.example.com:8080"
     # NO_PROXY: "localhost,127.0.0.1,.internal"
-  
-  # capabilities 限制（Linux Capabilities）
-  # 默认 Docker 会授予一些 capabilities，生产环境应显式限制
-  # 空列表表示仅保留 Docker 默认的最小集合（chown, dac_override, fowner, fsetid, kill, setgid, setuid, setpcap, net_bind_service, sys_chroot）
-  # 如需进一步限制，可设置为空列表或仅保留必需的:
-  docker_cap_drop:
-    - "ALL"  # 先丢弃所有 capabilities
-  docker_cap_add:
-    - "CHOWN"      # 允许 chown 操作
-    - "SETGID"     # 允许 setgid
-    - "SETUID"     # 允许 setuid
-    # 如需网络访问，可能还需要:
-    # - "NET_BIND_SERVICE"  # 绑定特权端口（<1024）
-  
-  # 只读根文件系统（Read-Only Root Filesystem）
-  # 将容器的根文件系统设为只读，防止运行时修改系统文件
-  # 注意：需要确保 /tmp 等需要写入的目录已挂载为 tmpfs 或卷
-  # docker_read_only: true
-  
-  # 临时文件系统（Tmpfs Mounts）
-  # 将 /tmp 等目录挂载为内存文件系统，数据不持久化到磁盘
-  # 格式: "mountpoint:size"
-  docker_tmpfs:
-    - "/tmp:rw,noexec,nosuid,size=100m"
-    - "/var/tmp:rw,noexec,nosuid,size=50m"
-  
-  # 日志配置（Logging Configuration）
-  # 限制日志大小，防止磁盘耗尽
-  docker_log_driver: "json-file"
-  docker_log_opts:
-    max-size: "10m"
-    max-file: "3"
 
 # ==================== 部署后验证命令 ====================
 # 
