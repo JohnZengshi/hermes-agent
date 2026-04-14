@@ -99,6 +99,53 @@ memory:
 
 ## 启停流程
 
+## mac 沙箱准备（Colima + Docker）
+
+如果在 mac 上本地联调并希望 `terminal.backend: docker` 可用，先执行：
+
+```bash
+bash scripts/setup_docker_sandbox_mac.sh
+```
+
+可选环境变量：
+
+- `COLIMA_CPU`（默认 `4`）
+- `COLIMA_MEMORY`（默认 `8`，单位 GiB）
+- `COLIMA_DISK`（默认 `80`，单位 GiB）
+- `HERMES_SANDBOX_WORKSPACE`（默认 `/tmp/hermes-workspace`）
+
+完成后再执行 `./start_all_gateways.sh`，即可让 codecraft 的 Docker 沙箱配置生效。
+
+## Linux 服务器沙箱准备（Docker，默认 rootless）
+
+在 Linux 服务器上建议优先使用 rootless Docker：
+
+```bash
+sudo bash scripts/setup_docker_sandbox_linux.sh
+```
+
+常用可选参数：
+
+- `ROOTLESS=true|false`（默认 `true`）
+- `TARGET_USER=<username>`（默认当前用户）
+- `HERMES_SANDBOX_WORKSPACE=/opt/hermes/workspace`（默认该值）
+
+示例：
+
+```bash
+sudo ROOTLESS=true TARGET_USER=hermes HERMES_SANDBOX_WORKSPACE=/opt/hermes/workspace \
+  bash scripts/setup_docker_sandbox_linux.sh
+```
+
+完成后切换到目标用户验证：
+
+```bash
+su - hermes
+docker info
+```
+
+验证通过后再执行 `./start_all_gateways.sh`。
+
 ### 启动
 
 ```bash
