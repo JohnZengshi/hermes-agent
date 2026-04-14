@@ -11,6 +11,8 @@ from tools.memory_tool import (
     _scan_memory_content,
     ENTRY_DELIMITER,
     MEMORY_SCHEMA,
+    clear_guest_memory_for_flush,
+    read_memory_snapshot_for_flush,
 )
 
 
@@ -221,8 +223,8 @@ class TestMemoryStorePersistence:
 class TestSQLiteMemoryBackend:
     def test_roundtrip(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "tools.memory_tool.get_memory_dir",
-            lambda user_id=None: tmp_path / (user_id or "global"),
+            "tools.memory_tool.get_hermes_home",
+            lambda: tmp_path,
         )
 
         backend = SQLiteMemoryBackend()
@@ -232,8 +234,8 @@ class TestSQLiteMemoryBackend:
 
     def test_overwrite(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "tools.memory_tool.get_memory_dir",
-            lambda user_id=None: tmp_path / (user_id or "global"),
+            "tools.memory_tool.get_hermes_home",
+            lambda: tmp_path,
         )
 
         backend = SQLiteMemoryBackend()
@@ -244,8 +246,8 @@ class TestSQLiteMemoryBackend:
 
     def test_user_scoped(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "tools.memory_tool.get_memory_dir",
-            lambda user_id=None: tmp_path / (user_id or "global"),
+            "tools.memory_tool.get_hermes_home",
+            lambda: tmp_path,
         )
 
         alice_backend = SQLiteMemoryBackend(user_id="alice")
@@ -258,8 +260,8 @@ class TestSQLiteMemoryBackend:
 
     def test_memory_store_with_sqlite_backend(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "tools.memory_tool.get_memory_dir",
-            lambda user_id=None: tmp_path / (user_id or "global"),
+            "tools.memory_tool.get_hermes_home",
+            lambda: tmp_path,
         )
 
         store = MemoryStore(backend=SQLiteMemoryBackend(), memory_char_limit=500)
@@ -270,6 +272,112 @@ class TestSQLiteMemoryBackend:
         reloaded.load_from_disk()
 
         assert "persistent sqlite fact" in reloaded.memory_entries
+
+    def test_shared_db_path(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("tools.memory_tool.get_hermes_home", lambda: tmp_path)
+        backend = SQLiteMemoryBackend(user_id="alice")
+        assert backend._db_path() == tmp_path / "memories.db"
+
+    def test_migrates_legacy_schema(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("tools.memory_tool.get_hermes_home", lambda: tmp_path)
+
+        db_path = tmp_path / "memories.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                "CREATE TABLE memory_entries (target TEXT NOT NULL, position INTEGER NOT NULL, content TEXT NOT NULL, PRIMARY KEY (target, position))"
+            )
+            conn.execute(
+                "INSERT INTO memory_entries(target, position, content) VALUES (?, ?, ?)",
+                ("memory", 0, "legacy fact"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        backend = SQLiteMemoryBackend()
+        assert backend.load_entries("memory") == ["legacy fact"]
+
+        backend.save_entries("memory", ["new fact"])
+        assert backend.load_entries("memory") == ["new fact"]
+
+
+class TestClearGuestMemoryForFlush:
+    def test_clears_sqlite_guest_only(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("tools.memory_tool.get_hermes_home", lambda: tmp_path)
+
+        guest_backend = SQLiteMemoryBackend(user_id="guest_123")
+        user_backend = SQLiteMemoryBackend(user_id="alice")
+        guest_backend.save_entries("memory", ["guest memory"])
+        user_backend.save_entries("memory", ["alice memory"])
+
+        assert (
+            clear_guest_memory_for_flush(user_id="guest_123", backend_name="sqlite")
+            is True
+        )
+
+        assert guest_backend.load_entries("memory") == []
+        assert user_backend.load_entries("memory") == ["alice memory"]
+
+    def test_clears_file_guest_memory(self, tmp_path, monkeypatch):
+        guest_dir = tmp_path / "memories" / "guest_abc"
+        guest_dir.mkdir(parents=True)
+        (guest_dir / "MEMORY.md").write_text("g1")
+        (guest_dir / "USER.md").write_text("u1")
+
+        monkeypatch.setattr(
+            "tools.memory_tool.get_memory_dir",
+            lambda user_id=None: tmp_path / "memories" / (user_id or ""),
+        )
+
+        assert (
+            clear_guest_memory_for_flush(user_id="guest_abc", backend_name="file")
+            is True
+        )
+        assert not (guest_dir / "MEMORY.md").exists()
+        assert not (guest_dir / "USER.md").exists()
+
+    def test_non_guest_noop(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("tools.memory_tool.get_hermes_home", lambda: tmp_path)
+        assert (
+            clear_guest_memory_for_flush(user_id="alice", backend_name="sqlite")
+            is False
+        )
+
+
+class TestReadMemorySnapshotForFlush:
+    def test_reads_file_backend(self, tmp_path, monkeypatch):
+        mem_dir = tmp_path / "memories"
+        mem_dir.mkdir()
+        (mem_dir / "MEMORY.md").write_text("m1\n§\nm2")
+        (mem_dir / "USER.md").write_text("u1")
+        monkeypatch.setattr(
+            "tools.memory_tool.get_memory_dir", lambda user_id=None: mem_dir
+        )
+
+        snapshot = read_memory_snapshot_for_flush(user_id="alice", backend_name="file")
+        assert "Current MEMORY" in snapshot
+        assert "m1" in snapshot
+        assert "Current USER PROFILE" in snapshot
+        assert "u1" in snapshot
+
+    def test_reads_sqlite_backend(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("tools.memory_tool.get_hermes_home", lambda: tmp_path)
+        backend = SQLiteMemoryBackend(user_id="alice")
+        backend.save_entries("memory", ["m1", "m2"])
+        backend.save_entries("user", ["u1"])
+
+        snapshot = read_memory_snapshot_for_flush(
+            user_id="alice", backend_name="sqlite"
+        )
+        assert "Current MEMORY" in snapshot
+        assert "m1" in snapshot
+        assert "m2" in snapshot
+        assert "Current USER PROFILE" in snapshot
+        assert "u1" in snapshot
 
 
 class TestMemoryStoreSnapshot:
