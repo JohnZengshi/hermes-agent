@@ -4833,8 +4833,13 @@ class GatewayRunner:
         display = display_hermes_home()
 
         # Detect profile name from HERMES_HOME path
-        # Profile paths look like: ~/.hermes/profiles/<name>
-        profiles_parent = Path.home() / ".hermes" / "profiles"
+        # Profile paths look like: ~/.hermes/profiles/<name> or custom/profiles/<name>
+        hermes_home_path = get_hermes_home()
+        profiles_parent = (
+            hermes_home_path.parent
+            if hermes_home_path.parent.name == "profiles"
+            else hermes_home_path / "profiles"
+        )
         try:
             rel = home.relative_to(profiles_parent)
             profile_name = str(rel).split("/")[0]

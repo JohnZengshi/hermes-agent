@@ -4,8 +4,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEMPLATE_ROOT="$ROOT_DIR/templates/gateway-profiles"
-PROFILES_ROOT="${HOME}/.hermes/profiles"
-PROFILES=(hermes doubao codecraft flora frontmaster reviewpilot router)
+PROFILES_ROOT="${HERMES_PROFILES_ROOT:-${HOME}/.hermes/profiles}"
+ALL_PROFILES=(hermes doubao codecraft flora frontmaster reviewpilot router)
+
+if [ $# -gt 0 ]; then
+    PROFILES=("$@")
+else
+    PROFILES=("${ALL_PROFILES[@]}")
+fi
 
 if [ ! -d "$TEMPLATE_ROOT" ]; then
     echo "错误: 未找到 profile 模板目录: $TEMPLATE_ROOT" >&2
@@ -44,4 +50,4 @@ for profile in "${PROFILES[@]}"; do
     echo "已同步 profile: $profile -> $dst_dir"
 done
 
-echo "同步完成。运行时状态仍保留在 ~/.hermes/profiles/* 下。"
+echo "同步完成。运行时状态保留在 ${PROFILES_ROOT}/* 下。"
