@@ -157,11 +157,17 @@ class SQLiteMemoryBackend(MemoryBackend):
         try:
             self._ensure_schema(conn)
             rows = conn.execute(
-                "SELECT content FROM memory_entries WHERE target = ? ORDER BY position ASC",
-                (target,),
+                "SELECT content FROM memory_entries WHERE user_id = ? AND target = ? ORDER BY position ASC",
+                (self._effective_user_id(), target),
             ).fetchall()
             return [row[0] for row in rows if row and row[0]]
-        except sqlite3.Error:
+        except sqlite3.Error as e:
+            logger.warning(
+                "[memory] sqlite load failed for user_id=%r target=%r: %s",
+                self._effective_user_id(),
+                target,
+                e,
+            )
             return []
         finally:
             if should_close:
@@ -173,10 +179,17 @@ class SQLiteMemoryBackend(MemoryBackend):
             self._ensure_schema(conn)
             if should_close:
                 conn.execute("BEGIN IMMEDIATE")
-            conn.execute("DELETE FROM memory_entries WHERE target = ?", (target,))
+            user_id = self._effective_user_id()
+            conn.execute(
+                "DELETE FROM memory_entries WHERE user_id = ? AND target = ?",
+                (user_id, target),
+            )
             conn.executemany(
-                "INSERT INTO memory_entries(target, position, content) VALUES (?, ?, ?)",
-                [(target, index, entry) for index, entry in enumerate(entries)],
+                "INSERT INTO memory_entries(user_id, target, position, content) VALUES (?, ?, ?, ?)",
+                [
+                    (user_id, target, index, entry)
+                    for index, entry in enumerate(entries)
+                ],
             )
             if should_close:
                 conn.commit()
@@ -206,7 +219,7 @@ class SQLiteMemoryBackend(MemoryBackend):
             conn.close()
 
     def _db_path(self) -> Path:
-        path = get_memory_dir(self._user_id) / "memory.db"
+        path = get_hermes_home() / "memories.db"
         logger.info(
             "[memory] SQLiteBackend._db_path: user_id=%r → %s", self._user_id, path
         )
@@ -226,9 +239,132 @@ class SQLiteMemoryBackend(MemoryBackend):
 
     @staticmethod
     def _ensure_schema(conn: sqlite3.Connection):
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_entries'"
+        ).fetchone()
+
+        if table_exists:
+            rows = conn.execute("PRAGMA table_info(memory_entries)").fetchall()
+            cols = [row[1] for row in rows]
+            pk_map = {row[1]: row[5] for row in rows if row[5] > 0}
+            expected_pk = {"user_id": 1, "target": 2, "position": 3}
+            has_required_cols = all(
+                name in cols for name in ("user_id", "target", "position", "content")
+            )
+            if (not has_required_cols) or (pk_map != expected_pk):
+                conn.execute(
+                    "ALTER TABLE memory_entries RENAME TO memory_entries_legacy"
+                )
+                conn.execute(
+                    "CREATE TABLE memory_entries (user_id TEXT NOT NULL, target TEXT NOT NULL, position INTEGER NOT NULL, content TEXT NOT NULL, PRIMARY KEY (user_id, target, position))"
+                )
+                legacy_cols = [
+                    row[1]
+                    for row in conn.execute(
+                        "PRAGMA table_info(memory_entries_legacy)"
+                    ).fetchall()
+                ]
+                if all(
+                    name in legacy_cols for name in ("target", "position", "content")
+                ):
+                    conn.execute(
+                        "INSERT INTO memory_entries(user_id, target, position, content) "
+                        "SELECT ?, target, position, content FROM memory_entries_legacy",
+                        ("__global__",),
+                    )
+                conn.execute("DROP TABLE memory_entries_legacy")
+
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS memory_entries (target TEXT NOT NULL, position INTEGER NOT NULL, content TEXT NOT NULL, PRIMARY KEY (target, position))"
+            "CREATE TABLE IF NOT EXISTS memory_entries (user_id TEXT NOT NULL, target TEXT NOT NULL, position INTEGER NOT NULL, content TEXT NOT NULL, PRIMARY KEY (user_id, target, position))"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_user ON memory_entries(user_id, target)"
+        )
+
+    def _effective_user_id(self) -> str:
+        return self._user_id or "__global__"
+
+
+def read_memory_snapshot_for_flush(
+    user_id: Optional[str],
+    backend_name: str = "file",
+) -> str:
+    """Return formatted memory snapshot text for gateway flush guards.
+
+    Includes both memory targets (memory/user) for the given user scope.
+    Returns an empty string when there is no saved content.
+    """
+    current_memory = ""
+    backend = (backend_name or "file").strip().lower()
+
+    if backend == "sqlite":
+        sqlite_backend = SQLiteMemoryBackend(user_id=user_id)
+        for target, label in [
+            ("memory", "MEMORY (your personal notes)"),
+            ("user", "USER PROFILE (who the user is)"),
+        ]:
+            entries = sqlite_backend.load_entries(target)
+            if entries:
+                current_memory += (
+                    f"\n\n## Current {label}:\n{ENTRY_DELIMITER.join(entries)}"
+                )
+        return current_memory
+
+    mem_dir = get_memory_dir(user_id)
+    for fname, label in [
+        ("MEMORY.md", "MEMORY (your personal notes)"),
+        ("USER.md", "USER PROFILE (who the user is)"),
+    ]:
+        fpath = mem_dir / fname
+        if fpath.exists():
+            content = fpath.read_text(encoding="utf-8").strip()
+            if content:
+                current_memory += f"\n\n## Current {label}:\n{content}"
+    return current_memory
+
+
+def clear_guest_memory_for_flush(
+    user_id: Optional[str],
+    backend_name: str = "file",
+) -> bool:
+    """Clear persisted memory for guest users after reset-time flush.
+
+    Returns True when cleanup was performed, False otherwise.
+    """
+    if not user_id or not str(user_id).startswith("guest_"):
+        return False
+
+    backend = (backend_name or "file").strip().lower()
+    if backend == "sqlite":
+        sqlite_backend = SQLiteMemoryBackend(user_id=user_id)
+        conn = sqlite_backend._connect()
+        try:
+            sqlite_backend._ensure_schema(conn)
+            conn.execute(
+                "DELETE FROM memory_entries WHERE user_id = ?",
+                (sqlite_backend._effective_user_id(),),
+            )
+            conn.commit()
+        except sqlite3.Error as e:
+            logger.warning(
+                "[memory] Failed to clear sqlite guest memory for user_id=%r: %s",
+                user_id,
+                e,
+            )
+            return False
+        finally:
+            conn.close()
+        return True
+
+    mem_dir = get_memory_dir(user_id)
+    for fname in ("MEMORY.md", "USER.md"):
+        fpath = mem_dir / fname
+        try:
+            if fpath.exists():
+                fpath.unlink()
+        except OSError:
+            pass
+    return True
 
 
 # ---------------------------------------------------------------------------
