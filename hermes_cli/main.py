@@ -3514,6 +3514,8 @@ def _invalidate_update_cache():
     The git repo is shared across profiles — when one profile runs
     ``hermes update``, every profile is now current.
     """
+    from hermes_cli.profiles import _get_default_hermes_home
+
     homes = []
     # Default profile home (Docker-aware — uses /opt/data in Docker)
     from hermes_constants import get_default_hermes_root
