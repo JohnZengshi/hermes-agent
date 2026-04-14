@@ -458,7 +458,10 @@ class MemoryStore:
 
     def load_from_disk(self):
         """Load entries from MEMORY.md and USER.md, capture system prompt snapshot."""
-        get_memory_dir(self._user_id).mkdir(parents=True, exist_ok=True)
+        # Only file backend needs per-user memory directories.
+        # SQLite backend stores data in profile-level shared memories.db.
+        if isinstance(self._backend, FileMemoryBackend):
+            get_memory_dir(self._user_id).mkdir(parents=True, exist_ok=True)
 
         self.memory_entries = self._backend.load_entries("memory")
         self.user_entries = self._backend.load_entries("user")

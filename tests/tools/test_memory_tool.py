@@ -273,6 +273,18 @@ class TestSQLiteMemoryBackend:
 
         assert "persistent sqlite fact" in reloaded.memory_entries
 
+    def test_sqlite_load_does_not_create_user_memories_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("tools.memory_tool.get_hermes_home", lambda: tmp_path)
+        user_id = "8259215216"
+        user_mem_dir = tmp_path / "memories" / user_id
+
+        store = MemoryStore(
+            backend=SQLiteMemoryBackend(user_id=user_id), user_id=user_id
+        )
+        store.load_from_disk()
+
+        assert not user_mem_dir.exists()
+
     def test_shared_db_path(self, tmp_path, monkeypatch):
         monkeypatch.setattr("tools.memory_tool.get_hermes_home", lambda: tmp_path)
         backend = SQLiteMemoryBackend(user_id="alice")
