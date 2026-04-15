@@ -1,0 +1,40 @@
+# Generated from project template.
+# Edit templates/gateway-profiles/frontmaster/config.yaml, then resync.
+
+verbose: 1
+
+platforms:
+  api_server:
+    enabled: true
+    extra:
+      host: 0.0.0.0
+      port: 8648
+      key: "${API_KEY}"
+
+model:
+  default: gpt-5.2-codex
+  provider: custom
+  base_url: "${FRONTMASTER_BASE_URL}"
+  api_key: "${THIRD_PARTY_API_KEY}"
+  api_mode: codex_responses
+
+memory:
+  memory_enabled: true
+  backend: sqlite
+  user_profile_enabled: true
+  nudge_interval: 3
+
+platform_toolsets:
+  api_server:
+    - terminal
+    - process
+    - file
+    - web
+    - memory
+    - skills_list
+
+terminal:
+  backend: local
+  cwd: .
+  timeout: 120
+  persistent_shell: false

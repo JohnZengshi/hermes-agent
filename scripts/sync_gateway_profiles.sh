@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEMPLATE_ROOT="$ROOT_DIR/templates/gateway-profiles"
 PROFILES_ROOT="${HOME}/.hermes/profiles"
-PROFILES=(hermes doubao codecraft flora router)
+PROFILES=(hermes doubao codecraft flora frontmaster router)
 
 if [ ! -d "$TEMPLATE_ROOT" ]; then
     echo "错误: 未找到 profile 模板目录: $TEMPLATE_ROOT" >&2
@@ -33,6 +33,12 @@ for profile in "${PROFILES[@]}"; do
 
     if [ -f "$src_dir/.env.example" ]; then
         install -m 600 "$src_dir/.env.example" "$dst_dir/.env.example"
+    fi
+
+    if [ -d "$src_dir/skills" ]; then
+        rm -rf "$dst_dir/skills"
+        cp -R "$src_dir/skills" "$dst_dir/skills"
+        find "$dst_dir/skills" -type f -exec chmod 600 {} +
     fi
 
     echo "已同步 profile: $profile -> $dst_dir"
