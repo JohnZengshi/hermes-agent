@@ -18,6 +18,7 @@ from tools.session_search_tool import (
 # Tool schema guidance
 # =========================================================================
 
+
 class TestHiddenSessionSources:
     """Verify the _HIDDEN_SESSION_SOURCES constant used for third-party isolation."""
 
@@ -39,6 +40,7 @@ class TestSessionSearchSchema:
 # =========================================================================
 # _format_timestamp
 # =========================================================================
+
 
 class TestFormatTimestamp:
     def test_unix_float(self):
@@ -67,6 +69,7 @@ class TestFormatTimestamp:
 # =========================================================================
 # _format_conversation
 # =========================================================================
+
 
 class TestFormatConversation:
     def test_basic_messages(self):
@@ -116,6 +119,7 @@ class TestFormatConversation:
 # _truncate_around_matches
 # =========================================================================
 
+
 class TestTruncateAroundMatches:
     def test_short_text_unchanged(self):
         text = "Short text about docker"
@@ -149,7 +153,9 @@ class TestTruncateAroundMatches:
     def test_multiword_phrase_match_beats_individual_term(self):
         """Full phrase deep in text should be found even when a single term
         appears much earlier in boilerplate."""
-        boilerplate = "The project setup is complex. " * 500  # ~15K, has 'project' early
+        boilerplate = (
+            "The project setup is complex. " * 500
+        )  # ~15K, has 'project' early
         filler = "x" * (MAX_SESSION_CHARS + 20000)
         target = "We reviewed the keystone project roadmap in detail."
         text = boilerplate + filler + target + filler
@@ -185,21 +191,25 @@ class TestTruncateAroundMatches:
 # session_search (dispatcher)
 # =========================================================================
 
+
 class TestSessionSearch:
     def test_no_db_returns_error(self):
         from tools.session_search_tool import session_search
+
         result = json.loads(session_search(query="test"))
         assert result["success"] is False
         assert "not available" in result["error"].lower()
 
     def test_empty_query_returns_error(self):
         from tools.session_search_tool import session_search
+
         mock_db = object()
         result = json.loads(session_search(query="", db=mock_db))
         assert result["success"] is False
 
     def test_whitespace_query_returns_error(self):
         from tools.session_search_tool import session_search
+
         mock_db = object()
         result = json.loads(session_search(query="   ", db=mock_db))
         assert result["success"] is False
@@ -214,14 +224,24 @@ class TestSessionSearch:
 
         # Simulate FTS5 returning matches only from the current session
         mock_db.search_messages.return_value = [
-            {"session_id": current_sid, "content": "test match", "source": "cli",
-             "session_started": 1709500000, "model": "test"},
+            {
+                "session_id": current_sid,
+                "content": "test match",
+                "source": "cli",
+                "session_started": 1709500000,
+                "model": "test",
+            },
         ]
         mock_db.get_session.return_value = {"parent_session_id": None}
 
-        result = json.loads(session_search(
-            query="test", db=mock_db, current_session_id=current_sid,
-        ))
+        result = json.loads(
+            session_search(
+                query="test",
+                db=mock_db,
+                current_session_id=current_sid,
+                scope="global",
+            )
+        )
         assert result["success"] is True
         assert result["count"] == 0
         assert result["results"] == []
@@ -236,10 +256,20 @@ class TestSessionSearch:
         other_sid = "20260303_100000_def456"
 
         mock_db.search_messages.return_value = [
-            {"session_id": current_sid, "content": "match 1", "source": "cli",
-             "session_started": 1709500000, "model": "test"},
-            {"session_id": other_sid, "content": "match 2", "source": "telegram",
-             "session_started": 1709400000, "model": "test"},
+            {
+                "session_id": current_sid,
+                "content": "match 1",
+                "source": "cli",
+                "session_started": 1709500000,
+                "model": "test",
+            },
+            {
+                "session_id": other_sid,
+                "content": "match 2",
+                "source": "telegram",
+                "session_started": 1709400000,
+                "model": "test",
+            },
         ]
         mock_db.get_session.return_value = {"parent_session_id": None}
         mock_db.get_messages_as_conversation.return_value = [
@@ -249,17 +279,27 @@ class TestSessionSearch:
 
         # Mock async_call_llm to raise RuntimeError → summarizer returns None
         from unittest.mock import AsyncMock, patch as _patch
-        with _patch("tools.session_search_tool.async_call_llm",
-                     new_callable=AsyncMock,
-                     side_effect=RuntimeError("no provider")):
-            result = json.loads(session_search(
-                query="test", db=mock_db, current_session_id=current_sid,
-            ))
+
+        with _patch(
+            "tools.session_search_tool.async_call_llm",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("no provider"),
+        ):
+            result = json.loads(
+                session_search(
+                    query="test",
+                    db=mock_db,
+                    current_session_id=current_sid,
+                    scope="global",
+                )
+            )
 
         assert result["success"] is True
         # Current session should be skipped, only other_sid should appear
         assert result["sessions_searched"] == 1
-        assert current_sid not in [r.get("session_id") for r in result.get("results", [])]
+        assert current_sid not in [
+            r.get("session_id") for r in result.get("results", [])
+        ]
 
     def test_current_child_session_excludes_parent_lineage(self):
         """Compression/delegation parents should be excluded for the active child session."""
@@ -268,8 +308,13 @@ class TestSessionSearch:
 
         mock_db = MagicMock()
         mock_db.search_messages.return_value = [
-            {"session_id": "parent_sid", "content": "match", "source": "cli",
-             "session_started": 1709500000, "model": "test"},
+            {
+                "session_id": "parent_sid",
+                "content": "match",
+                "source": "cli",
+                "session_started": 1709500000,
+                "model": "test",
+            },
         ]
 
         def _get_session(session_id):
@@ -281,9 +326,14 @@ class TestSessionSearch:
 
         mock_db.get_session.side_effect = _get_session
 
-        result = json.loads(session_search(
-            query="test", db=mock_db, current_session_id="child_sid",
-        ))
+        result = json.loads(
+            session_search(
+                query="test",
+                db=mock_db,
+                current_session_id="child_sid",
+                scope="global",
+            )
+        )
 
         assert result["success"] is True
         assert result["count"] == 0
@@ -297,8 +347,13 @@ class TestSessionSearch:
 
         mock_db = MagicMock()
         mock_db.search_messages.return_value = [
-            {"session_id": "child_sid", "content": "match", "source": "cli",
-             "session_started": 1709500000, "model": "test"},
+            {
+                "session_id": "child_sid",
+                "content": "match",
+                "source": "cli",
+                "session_started": 1709500000,
+                "model": "test",
+            },
         ]
 
         def _get_session(session_id):
@@ -310,11 +365,369 @@ class TestSessionSearch:
 
         mock_db.get_session.side_effect = _get_session
 
-        result = json.loads(session_search(
-            query="test", db=mock_db, current_session_id="root_sid",
-        ))
+        result = json.loads(
+            session_search(
+                query="test",
+                db=mock_db,
+                current_session_id="root_sid",
+                scope="global",
+            )
+        )
 
         assert result["success"] is True
         assert result["count"] == 0
         assert result["results"] == []
         assert result["sessions_searched"] == 0
+
+    def test_default_scope_restricts_to_current_lineage(self):
+        """Default scope should only search within current session lineage."""
+        from unittest.mock import MagicMock
+        from tools.session_search_tool import session_search
+
+        mock_db = MagicMock()
+        current_sid = "current_sid"
+        other_sid = "other_sid"
+
+        mock_db.search_messages.return_value = [
+            {
+                "session_id": other_sid,
+                "content": "cross-session",
+                "source": "telegram",
+                "session_started": 1709400000,
+                "model": "test",
+            },
+            {
+                "session_id": current_sid,
+                "content": "same-session",
+                "source": "telegram",
+                "session_started": 1709500000,
+                "model": "test",
+            },
+        ]
+
+        def _get_session(session_id):
+            if session_id == current_sid:
+                return {"parent_session_id": None}
+            if session_id == other_sid:
+                return {"parent_session_id": None}
+            return None
+
+        mock_db.get_session.side_effect = _get_session
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+
+        from unittest.mock import AsyncMock, patch as _patch
+
+        with _patch(
+            "tools.session_search_tool.async_call_llm",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("no provider"),
+        ):
+            result = json.loads(
+                session_search(
+                    query="session",
+                    db=mock_db,
+                    current_session_id=current_sid,
+                )
+            )
+
+        assert result["success"] is True
+        assert result["scope"] == "current"
+        assert result["requested_scope"] == "current"
+        assert result["sessions_searched"] == 1
+        assert [r["session_id"] for r in result["results"]] == [current_sid]
+
+    def test_global_scope_excludes_current_and_keeps_others(self):
+        """Global scope should preserve old behavior: exclude current lineage."""
+        from unittest.mock import MagicMock
+        from tools.session_search_tool import session_search
+
+        mock_db = MagicMock()
+        current_sid = "current_sid"
+        other_sid = "other_sid"
+
+        mock_db.search_messages.return_value = [
+            {
+                "session_id": current_sid,
+                "content": "same-session",
+                "source": "telegram",
+                "session_started": 1709500000,
+                "model": "test",
+            },
+            {
+                "session_id": other_sid,
+                "content": "cross-session",
+                "source": "telegram",
+                "session_started": 1709400000,
+                "model": "test",
+            },
+        ]
+
+        def _get_session(session_id):
+            if session_id in {current_sid, other_sid}:
+                return {"parent_session_id": None}
+            return None
+
+        mock_db.get_session.side_effect = _get_session
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+
+        from unittest.mock import AsyncMock, patch as _patch
+
+        with _patch(
+            "tools.session_search_tool.async_call_llm",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("no provider"),
+        ):
+            result = json.loads(
+                session_search(
+                    query="session",
+                    db=mock_db,
+                    current_session_id=current_sid,
+                    scope="global",
+                )
+            )
+
+        assert result["success"] is True
+        assert result["scope"] == "global"
+        assert result["requested_scope"] == "global"
+        assert result["sessions_searched"] == 1
+        assert [r["session_id"] for r in result["results"]] == [other_sid]
+
+    def test_current_scope_without_current_session_falls_back_to_global(self):
+        """If no current_session_id is available, current scope degrades to global."""
+        from unittest.mock import MagicMock
+        from tools.session_search_tool import session_search
+
+        mock_db = MagicMock()
+        sid = "other_sid"
+
+        mock_db.search_messages.return_value = [
+            {
+                "session_id": sid,
+                "content": "cross-session",
+                "source": "telegram",
+                "session_started": 1709400000,
+                "model": "test",
+            },
+        ]
+        mock_db.get_session.return_value = {"parent_session_id": None}
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+
+        from unittest.mock import AsyncMock, patch as _patch
+
+        with _patch(
+            "tools.session_search_tool.async_call_llm",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("no provider"),
+        ):
+            result = json.loads(
+                session_search(
+                    query="session",
+                    db=mock_db,
+                    scope="current",
+                )
+            )
+
+        assert result["success"] is True
+        assert result["requested_scope"] == "current"
+        assert result["scope"] == "global"
+        assert result["sessions_searched"] == 1
+
+    def test_invalid_scope_returns_error(self):
+        """Invalid scope values should return a tool error."""
+        from unittest.mock import MagicMock
+        from tools.session_search_tool import session_search
+
+        mock_db = MagicMock()
+        result = json.loads(session_search(query="test", db=mock_db, scope="chat"))
+        assert result["success"] is False
+        assert "Invalid scope" in result["error"]
+
+
+class TestSessionSearchDefaultScopeConfig:
+    def test_omitted_scope_uses_env_default(self, monkeypatch):
+        """When scope is omitted, env var should set the default scope."""
+        from unittest.mock import MagicMock, AsyncMock, patch as _patch
+        from tools.session_search_tool import session_search
+
+        monkeypatch.setenv("HERMES_SESSION_SEARCH_SCOPE", "global")
+
+        mock_db = MagicMock()
+        current_sid = "current_sid"
+        other_sid = "other_sid"
+        mock_db.search_messages.return_value = [
+            {
+                "session_id": current_sid,
+                "content": "same-session",
+                "source": "telegram",
+                "session_started": 1709500000,
+                "model": "test",
+            },
+            {
+                "session_id": other_sid,
+                "content": "cross-session",
+                "source": "telegram",
+                "session_started": 1709400000,
+                "model": "test",
+            },
+        ]
+
+        def _get_session(session_id):
+            if session_id in {current_sid, other_sid}:
+                return {"parent_session_id": None}
+            return None
+
+        mock_db.get_session.side_effect = _get_session
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+
+        with _patch(
+            "tools.session_search_tool.async_call_llm",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("no provider"),
+        ):
+            result = json.loads(
+                session_search(
+                    query="session",
+                    db=mock_db,
+                    current_session_id=current_sid,
+                )
+            )
+
+        assert result["success"] is True
+        assert result["requested_scope"] == "global"
+        assert result["scope"] == "global"
+        assert [r["session_id"] for r in result["results"]] == [other_sid]
+
+    def test_omitted_scope_uses_config_default(self):
+        """When env is absent, config.yaml session_search.scope is used."""
+        from unittest.mock import MagicMock, AsyncMock, patch as _patch
+        from tools.session_search_tool import session_search
+
+        mock_db = MagicMock()
+        current_sid = "current_sid"
+        other_sid = "other_sid"
+        mock_db.search_messages.return_value = [
+            {
+                "session_id": current_sid,
+                "content": "same-session",
+                "source": "telegram",
+                "session_started": 1709500000,
+                "model": "test",
+            },
+            {
+                "session_id": other_sid,
+                "content": "cross-session",
+                "source": "telegram",
+                "session_started": 1709400000,
+                "model": "test",
+            },
+        ]
+
+        def _get_session(session_id):
+            if session_id in {current_sid, other_sid}:
+                return {"parent_session_id": None}
+            return None
+
+        mock_db.get_session.side_effect = _get_session
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+
+        with (
+            _patch(
+                "hermes_cli.config.load_config",
+                return_value={"session_search": {"scope": "global"}},
+            ),
+            _patch(
+                "tools.session_search_tool.async_call_llm",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("no provider"),
+            ),
+        ):
+            result = json.loads(
+                session_search(
+                    query="session",
+                    db=mock_db,
+                    current_session_id=current_sid,
+                )
+            )
+
+        assert result["success"] is True
+        assert result["requested_scope"] == "global"
+        assert result["scope"] == "global"
+        assert [r["session_id"] for r in result["results"]] == [other_sid]
+
+    def test_scope_precedence_argument_over_env_over_config(self, monkeypatch):
+        """Precedence should be: explicit arg > env > config > builtin default."""
+        from unittest.mock import MagicMock, AsyncMock, patch as _patch
+        from tools.session_search_tool import session_search
+
+        monkeypatch.setenv("HERMES_SESSION_SEARCH_SCOPE", "global")
+
+        mock_db = MagicMock()
+        current_sid = "current_sid"
+        other_sid = "other_sid"
+        mock_db.search_messages.return_value = [
+            {
+                "session_id": current_sid,
+                "content": "same-session",
+                "source": "telegram",
+                "session_started": 1709500000,
+                "model": "test",
+            },
+            {
+                "session_id": other_sid,
+                "content": "cross-session",
+                "source": "telegram",
+                "session_started": 1709400000,
+                "model": "test",
+            },
+        ]
+
+        def _get_session(session_id):
+            if session_id in {current_sid, other_sid}:
+                return {"parent_session_id": None}
+            return None
+
+        mock_db.get_session.side_effect = _get_session
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+
+        with (
+            _patch(
+                "hermes_cli.config.load_config",
+                return_value={"session_search": {"scope": "global"}},
+            ),
+            _patch(
+                "tools.session_search_tool.async_call_llm",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("no provider"),
+            ),
+        ):
+            result = json.loads(
+                session_search(
+                    query="session",
+                    db=mock_db,
+                    current_session_id=current_sid,
+                    scope="current",
+                )
+            )
+
+        assert result["success"] is True
+        assert result["requested_scope"] == "current"
+        assert result["scope"] == "current"
+        assert [r["session_id"] for r in result["results"]] == [current_sid]

@@ -16,7 +16,9 @@ def test_gateway_config_stt_disabled_from_dict_nested():
     assert config.stt_enabled is False
 
 
-def test_load_gateway_config_bridges_stt_enabled_from_config_yaml(tmp_path, monkeypatch):
+def test_load_gateway_config_bridges_stt_enabled_from_config_yaml(
+    tmp_path, monkeypatch
+):
     hermes_home = tmp_path / ".hermes"
     hermes_home.mkdir()
     (hermes_home / "config.yaml").write_text(
@@ -41,7 +43,9 @@ async def test_enrich_message_with_transcription_skips_when_stt_disabled():
 
     with patch(
         "tools.transcription_tools.transcribe_audio",
-        side_effect=AssertionError("transcribe_audio should not be called when STT is disabled"),
+        side_effect=AssertionError(
+            "transcribe_audio should not be called when STT is disabled"
+        ),
     ):
         result = await runner._enrich_message_with_transcription(
             "caption",
@@ -114,3 +118,67 @@ async def test_prepare_inbound_message_text_transcribes_queued_voice_event():
     assert result is not None
     assert "queued voice transcript" in result
     assert "voice message" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_prepare_inbound_message_text_prefixes_sender_for_shared_non_thread_group():
+    from gateway.run import GatewayRunner
+
+    runner = GatewayRunner.__new__(GatewayRunner)
+    runner.config = GatewayConfig(
+        stt_enabled=True,
+        group_sessions_per_user=False,
+        thread_sessions_per_user=False,
+    )
+
+    source = SessionSource(
+        platform=Platform.TELEGRAM,
+        chat_id="-100123",
+        chat_type="group",
+        user_name="Alice",
+    )
+    event = MessageEvent(
+        text="hello team",
+        message_type=MessageType.TEXT,
+        source=source,
+    )
+
+    result = await runner._prepare_inbound_message_text(
+        event=event,
+        source=source,
+        history=[],
+    )
+
+    assert result == "[Alice] hello team"
+
+
+@pytest.mark.asyncio
+async def test_prepare_inbound_message_text_no_prefix_for_isolated_non_thread_group():
+    from gateway.run import GatewayRunner
+
+    runner = GatewayRunner.__new__(GatewayRunner)
+    runner.config = GatewayConfig(
+        stt_enabled=True,
+        group_sessions_per_user=True,
+        thread_sessions_per_user=False,
+    )
+
+    source = SessionSource(
+        platform=Platform.TELEGRAM,
+        chat_id="-100123",
+        chat_type="group",
+        user_name="Alice",
+    )
+    event = MessageEvent(
+        text="hello team",
+        message_type=MessageType.TEXT,
+        source=source,
+    )
+
+    result = await runner._prepare_inbound_message_text(
+        event=event,
+        source=source,
+        history=[],
+    )
+
+    assert result == "hello team"

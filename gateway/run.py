@@ -3533,12 +3533,18 @@ class GatewayRunner:
         history = history or []
         message_text = event.text or ""
 
+        _is_non_dm = source.chat_type != "dm"
         _is_shared_thread = (
-            source.chat_type != "dm"
-            and source.thread_id
+            _is_non_dm
+            and bool(source.thread_id)
             and not getattr(self.config, "thread_sessions_per_user", False)
         )
-        if _is_shared_thread and source.user_name:
+        _is_shared_non_thread_group = (
+            _is_non_dm
+            and not source.thread_id
+            and not getattr(self.config, "group_sessions_per_user", True)
+        )
+        if (_is_shared_thread or _is_shared_non_thread_group) and source.user_name:
             message_text = f"[{source.user_name}] {message_text}"
 
         if event.media_urls:

@@ -3,6 +3,10 @@
 
 verbose: 1
 
+# 群聊会话策略：同一群（含话题/线程维度）共享上下文，不按发言人拆分 session
+group_sessions_per_user: false
+thread_sessions_per_user: false
+
 platforms:
   api_server:
     enabled: true
@@ -10,6 +14,14 @@ platforms:
       host: 0.0.0.0
       port: 8648
       key: "${API_KEY}"
+  telegram:
+    enabled: true
+    token: "${TELEGRAM_BOT_TOKEN}"
+    extra:
+      # 群里只在触发条件满足时回复：@bot、回复 bot、/命令
+      require_mention: true
+      # 留空表示没有“全量自动回复”群，避免每条消息都回
+      free_response_chats: []
 
 model:
   # default: gpt-5.2-codex
@@ -25,6 +37,10 @@ memory:
   backend: sqlite
   user_profile_enabled: true
   nudge_interval: 3
+
+session_search:
+  # 默认仅在当前会话 lineage 内检索，避免串群回忆
+  scope: current
 
 platform_toolsets:
   api_server:
