@@ -1153,6 +1153,75 @@ class TestResponsesEndpoint:
             assert len(call_kwargs["conversation_history"]) == 1
 
     @pytest.mark.asyncio
+    async def test_responses_without_user_header_generates_guest_user_id(self, adapter):
+        """Responses endpoint should generate a stable guest_* user_id when header is absent."""
+        mock_result = {
+            "final_response": "ok",
+            "messages": [],
+            "api_calls": 1,
+        }
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(
+                adapter, "_run_agent", new_callable=AsyncMock
+            ) as mock_run:
+                mock_run.return_value = (
+                    mock_result,
+                    {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                )
+                resp = await cli.post(
+                    "/v1/responses",
+                    json={"model": "hermes-agent", "input": "hello"},
+                    headers={"User-Agent": "pytest-agent"},
+                )
+
+            assert resp.status == 200
+            call_kwargs = mock_run.call_args.kwargs
+            assert isinstance(call_kwargs["user_id"], str)
+            assert call_kwargs["user_id"].startswith("guest_")
+
+    @pytest.mark.asyncio
+    async def test_responses_same_fingerprint_yields_same_guest_user_id(self, adapter):
+        """Same explicit fingerprint should deterministically map to the same guest user id."""
+        mock_result = {
+            "final_response": "ok",
+            "messages": [],
+            "api_calls": 1,
+        }
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(
+                adapter, "_run_agent", new_callable=AsyncMock
+            ) as mock_run:
+                mock_run.return_value = (
+                    mock_result,
+                    {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                )
+                headers = {
+                    "X-Device-Fingerprint": "fixed-device-123",
+                    "User-Agent": "pytest-agent",
+                }
+                resp1 = await cli.post(
+                    "/v1/responses",
+                    json={"model": "hermes-agent", "input": "hello 1"},
+                    headers=headers,
+                )
+                resp2 = await cli.post(
+                    "/v1/responses",
+                    json={"model": "hermes-agent", "input": "hello 2"},
+                    headers=headers,
+                )
+
+            assert resp1.status == 200
+            assert resp2.status == 200
+            first_user_id = mock_run.call_args_list[0].kwargs["user_id"]
+            second_user_id = mock_run.call_args_list[1].kwargs["user_id"]
+            assert first_user_id.startswith("guest_")
+            assert first_user_id == second_user_id
+
+    @pytest.mark.asyncio
     async def test_instructions_as_ephemeral_prompt(self, adapter):
         """The instructions field maps to ephemeral_system_prompt."""
         mock_result = {"final_response": "Ahoy!", "messages": [], "api_calls": 1}
@@ -2500,18 +2569,20 @@ class TestSessionIdHeader:
             assert call_kwargs["session_id"] == "some-session"
 
     @pytest.mark.asyncio
-    async def test_legacy_session_and_user_alias_headers_are_accepted(self, adapter):
+    async def test_legacy_session_and_user_alias_headers_are_accepted(
+        self, auth_adapter
+    ):
         mock_result = {"final_response": "Continuing!", "messages": [], "api_calls": 1}
         mock_db = MagicMock()
         mock_db.get_messages_as_conversation.return_value = [
             {"role": "user", "content": "previous message"},
             {"role": "assistant", "content": "previous reply"},
         ]
-        adapter._session_db = mock_db
-        app = _create_app(adapter)
+        auth_adapter._session_db = mock_db
+        app = _create_app(auth_adapter)
         async with TestClient(TestServer(app)) as cli:
             with patch.object(
-                adapter, "_run_agent", new_callable=AsyncMock
+                auth_adapter, "_run_agent", new_callable=AsyncMock
             ) as mock_run:
                 mock_run.return_value = (
                     mock_result,
@@ -2523,6 +2594,7 @@ class TestSessionIdHeader:
                     headers={
                         "X-Session-Id": "legacy-session-1",
                         "X-User-Id": "legacy-user-1",
+                        "Authorization": "Bearer sk-secret",
                     },
                     json={
                         "model": "hermes-agent",
@@ -2535,3 +2607,68 @@ class TestSessionIdHeader:
             call_kwargs = mock_run.call_args.kwargs
             assert call_kwargs["session_id"] == "legacy-session-1"
             assert call_kwargs["user_id"] == "legacy-user-1"
+
+
+class TestRunsEndpoint:
+    @pytest.mark.asyncio
+    async def test_runs_without_user_header_generates_guest_user_id(self, adapter):
+        """Runs endpoint should align with chat/responses user_id guest fallback."""
+        app = _create_app(adapter)
+        app.router.add_post("/v1/runs", adapter._handle_runs)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_create_agent") as mock_create_agent:
+                mock_agent = MagicMock()
+                mock_agent.run_conversation.return_value = {
+                    "final_response": "done",
+                    "messages": [],
+                    "api_calls": 1,
+                }
+                mock_agent.session_prompt_tokens = 0
+                mock_agent.session_completion_tokens = 0
+                mock_agent.session_total_tokens = 0
+                mock_create_agent.return_value = mock_agent
+
+                resp = await cli.post(
+                    "/v1/runs",
+                    json={"input": "hello from runs"},
+                    headers={"User-Agent": "pytest-runs-agent"},
+                )
+
+            assert resp.status == 202
+            call_kwargs = mock_create_agent.call_args.kwargs
+            assert isinstance(call_kwargs["user_id"], str)
+            assert call_kwargs["user_id"].startswith("guest_")
+
+    @pytest.mark.asyncio
+    async def test_runs_explicit_user_header_takes_precedence_over_fingerprint(
+        self, adapter
+    ):
+        """Explicit user header must win when both user-id and fingerprint headers exist."""
+        app = _create_app(adapter)
+        app.router.add_post("/v1/runs", adapter._handle_runs)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_create_agent") as mock_create_agent:
+                mock_agent = MagicMock()
+                mock_agent.run_conversation.return_value = {
+                    "final_response": "done",
+                    "messages": [],
+                    "api_calls": 1,
+                }
+                mock_agent.session_prompt_tokens = 0
+                mock_agent.session_completion_tokens = 0
+                mock_agent.session_total_tokens = 0
+                mock_create_agent.return_value = mock_agent
+
+                resp = await cli.post(
+                    "/v1/runs",
+                    json={"input": "hello precedence"},
+                    headers={
+                        "X-User-Id": "explicit-user-1",
+                        "X-Device-Fingerprint": "fixed-device-123",
+                        "User-Agent": "pytest-runs-agent",
+                    },
+                )
+
+            assert resp.status == 202
+            call_kwargs = mock_create_agent.call_args.kwargs
+            assert call_kwargs["user_id"] == "explicit-user-1"

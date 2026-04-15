@@ -1164,6 +1164,7 @@ class APIServerAdapter(BasePlatformAdapter):
         self,
         ephemeral_system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         stream_delta_callback=None,
         tool_progress_callback=None,
         tool_start_callback=None,
@@ -1220,6 +1221,7 @@ class APIServerAdapter(BasePlatformAdapter):
             tool_complete_callback=tool_complete_callback,
             session_db=self._ensure_session_db(),
             fallback_model=fallback_model,
+            user_id=user_id,
         )
         return agent
 
@@ -1512,6 +1514,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     conversation_history=history,
                     ephemeral_system_prompt=system_prompt,
                     session_id=session_id,
+                    user_id=user_id,
                     stream_delta_callback=_on_delta,
                     tool_progress_callback=_on_tool_progress,
                     agent_ref=agent_ref,
@@ -1536,6 +1539,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 conversation_history=history,
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
+                user_id=user_id,
             )
 
         idempotency_key = request.headers.get("Idempotency-Key")
@@ -2424,7 +2428,7 @@ class APIServerAdapter(BasePlatformAdapter):
 
         # Run the agent (with Idempotency-Key support)
         session_id = str(uuid.uuid4())
-        user_id = _header_value(request, _USER_ID_HEADERS) or None
+        user_id = _get_or_create_user_id(request)
         logger.info(
             "[api_server] /v1/responses: session_id=%r user_id=%r (header=%r)",
             session_id,
@@ -2493,6 +2497,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     conversation_history=conversation_history,
                     ephemeral_system_prompt=instructions,
                     session_id=session_id,
+                    user_id=user_id,
                     stream_delta_callback=_on_delta,
                     tool_progress_callback=_on_tool_progress,
                     tool_start_callback=_on_tool_start,
@@ -3032,6 +3037,7 @@ class APIServerAdapter(BasePlatformAdapter):
         conversation_history: List[Dict[str, str]],
         ephemeral_system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         stream_delta_callback=None,
         tool_progress_callback=None,
         tool_start_callback=None,
@@ -3058,6 +3064,7 @@ class APIServerAdapter(BasePlatformAdapter):
             agent = self._create_agent(
                 ephemeral_system_prompt=ephemeral_system_prompt,
                 session_id=session_id,
+                user_id=user_id,
                 stream_delta_callback=stream_delta_callback,
                 tool_progress_callback=tool_progress_callback,
                 tool_start_callback=tool_start_callback,
@@ -3291,7 +3298,7 @@ class APIServerAdapter(BasePlatformAdapter):
 
         session_id = body.get("session_id") or run_id
         ephemeral_system_prompt = instructions
-        user_id = _header_value(request, _USER_ID_HEADERS) or None
+        user_id = _get_or_create_user_id(request)
         logger.info(
             "[api_server] /v1/runs: session_id=%r user_id=%r (header=%r)",
             session_id,
