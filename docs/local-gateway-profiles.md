@@ -209,54 +209,11 @@ Kelivo 连接配置：
 
 ## 待办事项
 
-### 1. 共享 DB + user_id 列
-
-当前每个用户一个独立 `memory.db`（`memories/<user_id>/memory.db`），用户量达到十万级后会产生大量小文件，与原来的 `USER.md`/`MEMORY.md` 方案存在相同目录扩展问题。
-
-**改进方案：** 改为共享数据库 + `user_id` 列：
-
-```sql
-CREATE TABLE memory_entries (
-    user_id  TEXT NOT NULL,
-    target   TEXT NOT NULL,    -- 'memory' 或 'user'
-    position INTEGER NOT NULL,
-    content  TEXT NOT NULL,
-    PRIMARY KEY (user_id, target, position)
-);
-CREATE INDEX idx_memory_user ON memory_entries(user_id, target);
-```
-
-- 所有用户共享一个 `memories.db`（放在 profile 根目录 `~/.hermes/profiles/<name>/memories.db`）
-- 查询时 `WHERE user_id = ?`
-- 避免 inode 耗尽和目录扫描性能问题
-- 需要考虑 guest 用户数据清理策略
-
-### 2. 自定义 Provider 支持
-
-当前 doubao 配置仅支持预定义的 provider（`opencode-go`、`opencode-zen` 等）。需要增加自定义 provider 支持，允许：
-
-- 自定义 API URL（如私有部署的兼容 OpenAI 的推理服务）
-- OpenAI Chat Completions 格式（`/v1/chat/completions`）
-- 用户在 `config.yaml` 中直接指定 `base_url`、`api_key`、`model` 列表
-
-**配置示例：**
-
-```yaml
-model:
-  default: my-custom-model
-  provider: custom-openai
-  custom_providers:
-    custom-openai:
-      base_url: "https://my-inference-server.example.com/v1"
-      api_key_env: MY_CUSTOM_API_KEY
-      transport: openai_chat
-      models:
-        - my-custom-model
-        - my-other-model
-```
-
-需要改动的代码路径：
-- `hermes_cli/auth.py` — 动态注册 provider
-- `hermes_cli/runtime_provider.py` — 解析 `custom_providers` 配置
-- `hermes_cli/models.py` — 合并自定义模型列表
-- `hermes_cli/config.py` — 新增 `model.custom_providers` 配置项
+- [ ] 网关层硬鉴权（方案1，暂缓实现）
+  - 对“底层行为更新 / 教导模式 / 持久化行为规则修改”增加**代码级硬校验**（非 SOUL 软约束）。
+  - 仅允许 Telegram 真实 `from_user.id` 属于授权集合（`8259215216`, `8648124057`）时触发：
+    - `skill_manage` 的 create/update（含 teaching-mode 类 skill）
+    - 持久化 memory 写入（会改变长期行为）
+    - personality/system 风格类全局持久化更新
+  - 明确拒绝“消息文本自报 ID”作为授权依据；必须以平台事件身份为准。
+  - 目标：避免群聊中伪造身份触发教导、以及跨会话风格污染。
