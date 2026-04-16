@@ -293,17 +293,29 @@ class BaseEnvironment(ABC):
         ``_snapshot_ready = True`` so subsequent commands source the snapshot
         instead of running with ``bash -l``.
         """
+        init_cwd = self.cwd or ""
+        quoted_init_cwd = self._quote_cwd_for_cd(init_cwd)
+
         # Full capture: env vars, functions (filtered), aliases, shell options.
-        bootstrap = (
-            f"export -p > {self._snapshot_path}\n"
-            f"declare -f | grep -vE '^_[^_]' >> {self._snapshot_path}\n"
-            f"alias -p >> {self._snapshot_path}\n"
-            f"echo 'shopt -s expand_aliases' >> {self._snapshot_path}\n"
-            f"echo 'set +e' >> {self._snapshot_path}\n"
-            f"echo 'set +u' >> {self._snapshot_path}\n"
-            f"pwd -P > {self._cwd_file} 2>/dev/null || true\n"
-            f"printf '\\n{self._cwd_marker}%s{self._cwd_marker}\\n' \"$(pwd -P)\"\n"
+        bootstrap_parts: list[str] = []
+        if quoted_init_cwd:
+            # Align initial session cwd with configured backend cwd.
+            # Keep snapshot initialization resilient even if cwd is unavailable.
+            bootstrap_parts.append(f"cd -- {quoted_init_cwd} 2>/dev/null || true")
+
+        bootstrap_parts.extend(
+            [
+                f"export -p > {self._snapshot_path}",
+                f"declare -f | grep -vE '^_[^_]' >> {self._snapshot_path}",
+                f"alias -p >> {self._snapshot_path}",
+                f"echo 'shopt -s expand_aliases' >> {self._snapshot_path}",
+                f"echo 'set +e' >> {self._snapshot_path}",
+                f"echo 'set +u' >> {self._snapshot_path}",
+                f"pwd -P > {self._cwd_file} 2>/dev/null || true",
+                f"printf '\\n{self._cwd_marker}%s{self._cwd_marker}\\n' \"$(pwd -P)\"",
+            ]
         )
+        bootstrap = "\n".join(bootstrap_parts)
         try:
             proc = self._run_bash(bootstrap, login=True, timeout=self._snapshot_timeout)
             result = self._wait_for_process(proc, timeout=self._snapshot_timeout)
@@ -339,10 +351,8 @@ class BaseEnvironment(ABC):
             parts.append(f"source {self._snapshot_path} 2>/dev/null || true")
 
         # cd to working directory — let bash expand ~ natively
-        quoted_cwd = (
-            shlex.quote(cwd) if cwd != "~" and not cwd.startswith("~/") else cwd
-        )
-        parts.append(f"cd {quoted_cwd} || exit 126")
+        quoted_cwd = self._quote_cwd_for_cd(cwd)
+        parts.append(f"cd -- {quoted_cwd} || exit 126")
 
         # Run the actual command
         parts.append(f"eval '{escaped}'")
@@ -364,6 +374,25 @@ class BaseEnvironment(ABC):
         parts.append("exit $__hermes_ec")
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _quote_cwd_for_cd(cwd: str) -> str:
+        """Quote cwd safely for shell `cd` while preserving home expansion.
+
+        - ``~`` resolves to ``$HOME``
+        - ``~/...`` resolves to ``$HOME/...`` with tail safely shell-quoted
+        - everything else is safely shell-quoted as a single path argument
+        """
+        if not cwd:
+            return ""
+        if cwd == "~":
+            return '"$HOME"'
+        if cwd.startswith("~/"):
+            tail = cwd[2:]
+            if not tail:
+                return '"$HOME"/'
+            return f'"$HOME"/{shlex.quote(tail)}'
+        return shlex.quote(cwd)
 
     # ------------------------------------------------------------------
     # Stdin heredoc embedding (for SDK backends)
@@ -576,4 +605,3 @@ class BaseEnvironment(ABC):
         from tools.terminal_tool import _transform_sudo_command
 
         return _transform_sudo_command(command)
-

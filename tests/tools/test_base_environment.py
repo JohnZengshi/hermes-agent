@@ -30,7 +30,7 @@ class TestWrapCommand:
         wrapped = env._wrap_command("echo hello", "/tmp")
 
         assert "source" in wrapped
-        assert "cd /tmp" in wrapped or "cd '/tmp'" in wrapped
+        assert "cd -- /tmp" in wrapped or "cd -- '/tmp'" in wrapped
         assert "eval 'echo hello'" in wrapped
         assert "__hermes_ec=$?" in wrapped
         assert "export -p >" in wrapped
@@ -57,8 +57,24 @@ class TestWrapCommand:
         env._snapshot_ready = True
         wrapped = env._wrap_command("ls", "~")
 
-        assert "cd ~" in wrapped
-        assert "cd '~'" not in wrapped
+        assert 'cd -- "$HOME"' in wrapped
+        assert "cd ~" not in wrapped
+
+    def test_tilde_subpath_with_spaces_quoted(self):
+        env = _TestableEnv()
+        env._snapshot_ready = True
+        wrapped = env._wrap_command("ls", "~/My Documents")
+
+        assert "cd -- \"$HOME\"/'My Documents'" in wrapped
+
+    def test_quote_cwd_for_cd_non_tilde(self):
+        assert _TestableEnv._quote_cwd_for_cd("/tmp/test dir") == "'/tmp/test dir'"
+
+    def test_quote_cwd_for_cd_tilde(self):
+        assert _TestableEnv._quote_cwd_for_cd("~") == '"$HOME"'
+
+    def test_quote_cwd_for_cd_tilde_subpath(self):
+        assert _TestableEnv._quote_cwd_for_cd("~/abc def") == "\"$HOME\"/'abc def'"
 
     def test_cd_failure_exit_126(self):
         env = _TestableEnv()
@@ -147,7 +163,8 @@ class TestInitSessionFailure:
         env._snapshot_ready = False
 
         calls = []
-        def mock_run_bash(cmd, *, login=False, timeout=120, stdin_data=None):
+
+        def mock_run_bash(cmd_string, *, login=False, timeout=120, stdin_data=None):
             calls.append({"login": login})
             # Return a mock process handle
             mock = MagicMock()
@@ -161,6 +178,44 @@ class TestInitSessionFailure:
 
         assert len(calls) == 1
         assert calls[0]["login"] is True
+
+
+class TestInitSessionBootstrapCwd:
+    def test_init_session_bootstrap_cd_uses_safe_home_expansion(self):
+        env = _TestableEnv(cwd="~/My Documents")
+        calls = []
+
+        def mock_run_bash(cmd_string, *, login=False, timeout=120, stdin_data=None):
+            calls.append(
+                {
+                    "cmd_string": cmd_string,
+                    "login": login,
+                    "timeout": timeout,
+                    "stdin_data": stdin_data,
+                }
+            )
+            mock = MagicMock()
+            mock.poll.return_value = 0
+            mock.returncode = 0
+            mock.stdout = iter([])
+            return mock
+
+        env._run_bash = mock_run_bash
+        marker = env._cwd_marker
+        env._wait_for_process = lambda *_args, **_kwargs: {
+            "output": f"\n{marker}/Users/example/My Documents{marker}\n",
+            "returncode": 0,
+        }
+
+        env.init_session()
+
+        assert len(calls) == 1
+        assert calls[0]["login"] is True
+        assert (
+            "cd -- \"$HOME\"/'My Documents' 2>/dev/null || true"
+            in calls[0]["cmd_string"]
+        )
+        assert env._snapshot_ready is True
 
 
 class TestCwdMarker:

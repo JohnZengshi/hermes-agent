@@ -94,7 +94,26 @@ echo "正在启动 Hermes 网关进程..."
 start_gateway() {
     local profile="$1"
     local log_file="$LOG_DIR/$profile.log"
-    HERMES_HOME="$PROFILES_ROOT/$profile" "$PYTHON_PATH" -m hermes_cli.main -p "$profile" gateway run --replace -v > "$log_file" 2>&1 &
+    local env_file="$PROFILES_ROOT/$profile/.env"
+    local terminal_cwd=""
+    local messaging_cwd=""
+
+    if [ -f "$env_file" ]; then
+        terminal_cwd="$(read_env_value "$env_file" "TERMINAL_CWD")"
+        messaging_cwd="$(read_env_value "$env_file" "MESSAGING_CWD")"
+    fi
+
+    if [ -z "$terminal_cwd" ]; then
+        terminal_cwd="$messaging_cwd"
+    fi
+
+    if [ -n "$terminal_cwd" ]; then
+        HERMES_HOME="$PROFILES_ROOT/$profile" MESSAGING_CWD="$messaging_cwd" TERMINAL_CWD="$terminal_cwd" "$PYTHON_PATH" -m hermes_cli.main -p "$profile" gateway run --replace -v > "$log_file" 2>&1 &
+    elif [ -n "$messaging_cwd" ]; then
+        HERMES_HOME="$PROFILES_ROOT/$profile" MESSAGING_CWD="$messaging_cwd" "$PYTHON_PATH" -m hermes_cli.main -p "$profile" gateway run --replace -v > "$log_file" 2>&1 &
+    else
+        HERMES_HOME="$PROFILES_ROOT/$profile" "$PYTHON_PATH" -m hermes_cli.main -p "$profile" gateway run --replace -v > "$log_file" 2>&1 &
+    fi
     local pid=$!
     echo "$profile:$pid"
 }

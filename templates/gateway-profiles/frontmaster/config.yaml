@@ -53,6 +53,8 @@ platform_toolsets:
 
 terminal:
   backend: local
-  cwd: .
+  # 实际执行目录：优先使用环境变量 MESSAGING_CWD（适合网关/机器人场景）
+  # 例如：MESSAGING_CWD=/Users/littleflower/workspaces/frontmaster
+  cwd: "${MESSAGING_CWD}"
   timeout: 120
   persistent_shell: false
