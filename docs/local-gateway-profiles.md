@@ -5,48 +5,52 @@
 ## 目录结构
 
 ```
-templates/gateway-profiles/
-├── hermes/          # 主力 backend（端口 8643）
-│   ├── config.yaml
-│   ├── SOUL.md
-│   ├── .env
-│   └── .env.example
-├── doubao/          # 豆包 backend（端口 8644，kimi-k2.5 / opencode-go）
-│   ├── config.yaml
-│   ├── SOUL.md
-│   ├── .env
-│   └── .env.example
-├── codecraft/       # 代码匠 backend（端口 8646，kimi-k2.5 / 自定义 OpenAI 兼容 provider）
-│   ├── config.yaml
-│   ├── SOUL.md
-│   ├── .env
-│   └── .env.example
-├── flora/           # 小花 backend（端口 8647，kimi-k2.5 / opencode-go）
-│   ├── config.yaml
-│   ├── SOUL.md
-│   ├── .env
-│   └── .env.example
-├── frontmaster/     # FrontMaster backend（端口 8648，第三方 OpenAI 兼容）
-│   ├── config.yaml
-│   ├── SOUL.md
-│   ├── .env
-│   └── .env.example
-├── reviewpilot/     # 代码审查 bot（端口 8649，Webhook 8650，docker 沙箱）
-│   ├── config.yaml
-│   ├── SOUL.md
-│   ├── .env
-│   ├── .env.example
-│   └── skills/review/SKILL.md
-└── router/          # 智能路由（端口 8645）
-    ├── config.yaml
-    ├── SOUL.md
-    ├── .env
-    └── .env.example
+templates/
+├── gateway-profiles.env.example   # 七个 gateway profile 的统一环境变量示例
+└── gateway-profiles/
+    ├── hermes/          # 主力 backend（端口 8643）
+    │   ├── config.yaml
+    │   ├── SOUL.md
+    │   ├── .env
+    │   └── .env.example
+    ├── doubao/          # 豆包 backend（端口 8644，kimi-k2.5 / opencode-go）
+    │   ├── config.yaml
+    │   ├── SOUL.md
+    │   ├── .env
+    │   └── .env.example
+    ├── codecraft/       # 代码匠 backend（端口 8646，kimi-k2.5 / 自定义 OpenAI 兼容 provider）
+    │   ├── config.yaml
+    │   ├── SOUL.md
+    │   ├── .env
+    │   └── .env.example
+    ├── flora/           # 小花 backend（端口 8647，kimi-k2.5 / opencode-go）
+    │   ├── config.yaml
+    │   ├── SOUL.md
+    │   ├── .env
+    │   └── .env.example
+    ├── frontmaster/     # FrontMaster backend（端口 8648，第三方 OpenAI 兼容）
+    │   ├── config.yaml
+    │   ├── SOUL.md
+    │   ├── .env
+    │   └── .env.example
+    ├── reviewpilot/     # 代码审查 bot（端口 8649，Webhook 8650，docker 沙箱）
+    │   ├── config.yaml
+    │   ├── SOUL.md
+    │   ├── .env
+    │   ├── .env.example
+    │   └── skills/review/SKILL.md
+    └── router/          # 智能路由（端口 8645）
+        ├── config.yaml
+        ├── SOUL.md
+        ├── .env
+        └── .env.example
 ```
 
 ## 源配置（Source of Truth）
 
-模板目录包含 `config.yaml`、`SOUL.md`、`.env`、`.env.example`。
+统一环境变量示例位于 `templates/gateway-profiles.env.example`。
+
+各 profile 目录仍保留 `.env.example`，但它们现在是指向统一示例文件的轻量提示入口；运行时真正使用的仍是每个 profile 自己的 `.env`。
 
 ### 环境变量
 
@@ -61,7 +65,7 @@ templates/gateway-profiles/
 
 模板 `.env` 使用空值占位（如 `API_KEY=`），实际密钥本地填写，不提交到仓库。
 
-`.env.example` 与 `.env` 结构一致，供新部署参考。
+请从 `templates/gateway-profiles.env.example` 中复制对应 profile 的区块到 `templates/gateway-profiles/<profile>/.env`，再按本地环境填写实际值。
 
 ### config.yaml 占位符
 
