@@ -7,8 +7,34 @@ TEMPLATE_ROOT="$ROOT_DIR/templates/gateway-profiles"
 PROFILES_ROOT="${HERMES_PROFILES_ROOT:-${HOME}/.hermes/profiles}"
 ALL_PROFILES=(hermes doubao codecraft flora frontmaster reviewpilot router)
 
+usage() {
+    echo "用法: $0 [profile ...]"
+    echo ""
+    echo "同步指定的 Hermes gateway profile（不传参数则同步全部）。"
+    echo ""
+    echo "可用的 profile: ${ALL_PROFILES[*]}"
+    exit 1
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+fi
+
 if [ $# -gt 0 ]; then
     PROFILES=("$@")
+    for p in "${PROFILES[@]}"; do
+        found=false
+        for valid in "${ALL_PROFILES[@]}"; do
+            if [ "$p" = "$valid" ]; then
+                found=true
+                break
+            fi
+        done
+        if [ "$found" = false ]; then
+            echo "错误: 未知 profile '$p'。可用: ${ALL_PROFILES[*]}" >&2
+            exit 1
+        fi
+    done
 else
     PROFILES=("${ALL_PROFILES[@]}")
 fi

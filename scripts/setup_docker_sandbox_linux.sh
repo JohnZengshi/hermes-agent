@@ -13,6 +13,7 @@ set -euo pipefail
 ROOTLESS="${ROOTLESS:-true}"
 TARGET_USER="${TARGET_USER:-$(id -un)}"
 WORKSPACE_DIR="${HERMES_SANDBOX_WORKSPACE:-/opt/hermes/workspace}"
+DOCKER_READY_TIMEOUT="${DOCKER_READY_TIMEOUT:-60}"
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "错误: 该脚本需要 root 执行（用于安装依赖与配置用户）" >&2
@@ -26,6 +27,43 @@ if ! id "${TARGET_USER}" >/dev/null 2>&1; then
 fi
 
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+wait_for_rootful_docker() {
+  local timeout="$1"
+  local interval=2
+  local elapsed=0
+
+  while ! docker info >/dev/null 2>&1; do
+    if [[ "${elapsed}" -ge "${timeout}" ]]; then
+      echo "错误: rootful Docker 在 ${timeout} 秒内仍未就绪。" >&2
+      return 1
+    fi
+    sleep "${interval}"
+    elapsed=$((elapsed + interval))
+  done
+}
+
+rootless_docker_ready() {
+  local user="$1"
+  su - "${user}" -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock; docker info >/dev/null 2>&1'
+}
+
+wait_for_rootless_docker() {
+  local user="$1"
+  local timeout="$2"
+  local interval=2
+  local elapsed=0
+
+  while ! rootless_docker_ready "${user}"; do
+    if [[ "${elapsed}" -ge "${timeout}" ]]; then
+      echo "错误: 用户 ${user} 的 rootless Docker 在 ${timeout} 秒内仍未就绪。" >&2
+      echo "请切换到该用户后执行: docker info" >&2
+      return 1
+    fi
+    sleep "${interval}"
+    elapsed=$((elapsed + interval))
+  done
+}
 
 install_prereqs() {
   if has_cmd apt-get; then
@@ -88,8 +126,11 @@ export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock
 EOF
   fi
 
-  # 尝试即时启动用户 docker 服务
-  su - "${user}" -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user daemon-reload || true; systemctl --user enable --now docker || true'
+  echo "==> 启动用户 ${user} 的 rootless Docker 服务"
+  su - "${user}" -c 'export XDG_RUNTIME_DIR=/run/user/$(id -u); export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus; systemctl --user daemon-reload || true; systemctl --user enable --now docker || true'
+
+  echo "==> 等待用户 ${user} 的 rootless Docker 就绪"
+  wait_for_rootless_docker "${user}" "${DOCKER_READY_TIMEOUT}"
 }
 
 setup_rootful_for_user() {
@@ -97,6 +138,8 @@ setup_rootful_for_user() {
   echo "==> 使用 rootful Docker（将用户加入 docker 组）"
   usermod -aG docker "${user}"
   systemctl enable --now docker
+  echo "==> 等待 rootful Docker 就绪"
+  wait_for_rootful_docker "${DOCKER_READY_TIMEOUT}"
 }
 
 echo "==> 安装依赖"
@@ -117,7 +160,7 @@ chown -R "${TARGET_USER}:${TARGET_USER}" "${WORKSPACE_DIR}"
 
 cat <<EOF
 
-✅ Linux 沙箱环境准备完成
+✅ Linux 沙箱环境准备完成（Docker 已可用）
 
 模式: $( [[ "${ROOTLESS}" == "true" ]] && echo "rootless" || echo "rootful" )
 目标用户: ${TARGET_USER}
@@ -131,6 +174,9 @@ cat <<EOF
 
 下一步：
 1) 切换到目标用户: su - ${TARGET_USER}
-2) 验证 Docker: docker info
+2) 如为 rootless 模式，首次登录后可再执行一次 docker info 确认环境变量已生效
 3) 回到项目执行: ./start_all_gateways.sh
+
+已支持环境变量覆盖：
+  ROOTLESS / TARGET_USER / HERMES_SANDBOX_WORKSPACE / DOCKER_READY_TIMEOUT
 EOF

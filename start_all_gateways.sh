@@ -155,24 +155,58 @@ print("" if value is None else str(value), end="")
 PY
 }
 
-# 校验所选 profile 的 .env 文件存在性和 API_KEY
-for profile in "${SELECTED_PROFILES[@]}"; do
-    env_file="$PROFILES_ROOT/$profile/.env"
+validate_profile_env() {
+    local profile="$1"
+    shift
+
+    local env_file="$PROFILES_ROOT/$profile/.env"
     if [ ! -f "$env_file" ]; then
         echo "错误: 缺少 ${env_file}。请先填写 profiles 配置。" >&2
         exit 1
     fi
-    api_key="$(read_env_value "$env_file" API_KEY)"
-    if [ -z "$api_key" ]; then
-        echo "错误: ${env_file} 缺少 API_KEY。" >&2
-        exit 1
-    fi
+
+    local var
+    for var in "$@"; do
+        local value
+        value="$(read_env_value "$env_file" "$var")"
+        if [ -z "$value" ]; then
+            echo "错误: ${env_file} 缺少 ${var}。" >&2
+            exit 1
+        fi
+    done
+}
+
+# 校验所选 profile 的 .env 文件存在性和 API_KEY
+for profile in "${SELECTED_PROFILES[@]}"; do
+    case "$profile" in
+        hermes)
+            validate_profile_env hermes API_KEY
+            ;;
+        doubao)
+            validate_profile_env doubao API_KEY
+            ;;
+        codecraft)
+            validate_profile_env codecraft API_KEY CODECRAFT_BASE_URL THIRD_PARTY_API_KEY
+            ;;
+        flora)
+            validate_profile_env flora API_KEY
+            ;;
+        frontmaster)
+            validate_profile_env frontmaster API_KEY FRONTMASTER_BASE_URL THIRD_PARTY_API_KEY
+            ;;
+        reviewpilot)
+            validate_profile_env reviewpilot API_KEY
+            ;;
+        router)
+            validate_profile_env router ROUTER_API_KEY HERMES_BACKEND_API_KEY DOUBAO_BACKEND_API_KEY CODECRAFT_BACKEND_API_KEY FLORA_BACKEND_API_KEY FRONTMASTER_BACKEND_API_KEY REVIEWPILOT_BACKEND_API_KEY
+            ;;
+    esac
 done
 
 # 如果选中了 router，校验其路由变量
 if [[ " ${SELECTED_PROFILES[*]} " =~ router ]]; then
     router_env_file="$PROFILES_ROOT/router/.env"
-    for var in ROUTER_API_KEY HERMES_BACKEND_API_KEY DOUBAO_BACKEND_API_KEY CODECRAFT_BACKEND_API_KEY FLORA_BACKEND_API_KEY; do
+    for var in ROUTER_API_KEY HERMES_BACKEND_API_KEY DOUBAO_BACKEND_API_KEY CODECRAFT_BACKEND_API_KEY FLORA_BACKEND_API_KEY FRONTMASTER_BACKEND_API_KEY REVIEWPILOT_BACKEND_API_KEY; do
         val="$(read_env_value "$router_env_file" "$var")"
         if [ -z "$val" ]; then
             echo "错误: ${router_env_file} 缺少 ${var}。" >&2
@@ -184,7 +218,7 @@ fi
 # 校验所选 backend 与 router 的 API_KEY 一致性（仅当 router 和 backend 都在选中列表时）
 if [[ " ${SELECTED_PROFILES[*]} " =~ router ]]; then
     router_env_file="$PROFILES_ROOT/router/.env"
-    for backend in hermes doubao codecraft flora; do
+    for backend in hermes doubao codecraft flora frontmaster reviewpilot; do
         if [[ ! " ${SELECTED_PROFILES[*]} " =~ $backend ]]; then
             continue
         fi
@@ -194,6 +228,8 @@ if [[ " ${SELECTED_PROFILES[*]} " =~ router ]]; then
             doubao)    router_var="DOUBAO_BACKEND_API_KEY" ;;
             codecraft) router_var="CODECRAFT_BACKEND_API_KEY" ;;
             flora)     router_var="FLORA_BACKEND_API_KEY" ;;
+            frontmaster) router_var="FRONTMASTER_BACKEND_API_KEY" ;;
+            reviewpilot) router_var="REVIEWPILOT_BACKEND_API_KEY" ;;
         esac
         router_backend_key="$(read_env_value "$router_env_file" "$router_var")"
         if [ "$backend_api_key" != "$router_backend_key" ]; then
