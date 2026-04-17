@@ -74,6 +74,8 @@ def _ensure_ssl_certs() -> None:
 
 _ensure_ssl_certs()
 
+_AGENT_USER_ID_UNSET = object()
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -501,6 +503,26 @@ def _resolve_gateway_model(config: dict | None = None) -> str:
         return model_cfg
     elif isinstance(model_cfg, dict):
         return model_cfg.get("default") or model_cfg.get("model") or ""
+    return ""
+
+
+def _resolve_global_memory_owner_id(config: dict | None = None) -> str:
+    """Resolve GLOBAL_MEMORY_OWNER_ID from env or config.yaml.
+
+    Precedence:
+    1) GLOBAL_MEMORY_OWNER_ID environment variable
+    2) gateway.global_memory_owner_id in config.yaml
+
+    Empty/blank means disabled.
+    """
+    env_val = str(os.getenv("GLOBAL_MEMORY_OWNER_ID", "") or "").strip()
+    if env_val:
+        return env_val
+
+    cfg = config if config is not None else _load_gateway_config()
+    gateway_cfg = cfg.get("gateway", {}) if isinstance(cfg, dict) else {}
+    if isinstance(gateway_cfg, dict):
+        return str(gateway_cfg.get("global_memory_owner_id", "") or "").strip()
     return ""
 
 
@@ -3212,6 +3234,7 @@ class GatewayRunner:
 
         # Check for commands
         command = event.get_command()
+        global_memory_requested = False
 
         # Emit command:* hook for any recognized slash command.
         # GATEWAY_KNOWN_COMMANDS is derived from the central COMMAND_REGISTRY
@@ -3235,6 +3258,21 @@ class GatewayRunner:
         # Resolve aliases to canonical name so dispatch only checks canonicals.
         _cmd_def = _resolve_cmd(command) if command else None
         canonical = _cmd_def.name if _cmd_def else command
+
+        # Owner-only explicit global-memory trigger.
+        # /gmem <instruction>
+        # /global-memory <instruction>
+        if canonical == "gmem":
+            user_instruction = event.get_command_args().strip()
+            if not user_instruction:
+                return (
+                    "Usage: /gmem <instruction>\n"
+                    "Example: /gmem remember the canonical review repos for all groups"
+                )
+            event.text = user_instruction
+            command = None
+            canonical = None
+            global_memory_requested = True
 
         if canonical == "new":
             return await self._handle_reset_command(event)
@@ -3507,7 +3545,12 @@ class GatewayRunner:
         self._running_agents_ts[_quick_key] = time.time()
 
         try:
-            return await self._handle_message_with_agent(event, source, _quick_key)
+            return await self._handle_message_with_agent(
+                event,
+                source,
+                _quick_key,
+                global_memory_requested=global_memory_requested,
+            )
         finally:
             # If _run_agent replaced the sentinel with a real agent and
             # then cleaned it up, this is a no-op.  If we exited early
@@ -3700,7 +3743,13 @@ class GatewayRunner:
 
         return message_text
 
-    async def _handle_message_with_agent(self, event, source, _quick_key: str):
+    async def _handle_message_with_agent(
+        self,
+        event,
+        source,
+        _quick_key: str,
+        global_memory_requested: bool = False,
+    ):
         """Inner handler that runs under the _running_agents sentinel guard."""
         _msg_start_time = time.time()
         _platform_name = (
@@ -4198,6 +4247,16 @@ class GatewayRunner:
             return
 
         try:
+            effective_agent_user_id, global_mem_err = (
+                self._resolve_effective_agent_user_id(
+                    source.user_id,
+                    global_memory_requested=global_memory_requested,
+                    owner_id=_resolve_global_memory_owner_id(),
+                )
+            )
+            if global_mem_err:
+                return global_mem_err
+
             # Emit agent:start hook
             hook_ctx = {
                 "platform": source.platform.value if source.platform else "",
@@ -4216,6 +4275,7 @@ class GatewayRunner:
                 session_id=session_entry.session_id,
                 session_key=session_key,
                 event_message_id=event.message_id,
+                agent_user_id=effective_agent_user_id,
             )
 
             # Stop persistent typing indicator now that the agent is done
@@ -8262,11 +8322,40 @@ class GatewayRunner:
     _MAX_INTERRUPT_DEPTH = 3  # Cap recursive interrupt handling (#816)
 
     @staticmethod
+    def _resolve_effective_agent_user_id(
+        source_user_id: Optional[str],
+        *,
+        global_memory_requested: bool,
+        owner_id: str,
+    ) -> tuple[Any, Optional[str]]:
+        """Resolve runtime AIAgent.user_id for normal/global-memory mode.
+
+        Returns ``(effective_user_id, error_message)``.
+        - Normal mode: keep ``source_user_id``.
+        - Global-memory mode: owner-only; returns ``None`` on success so memory
+          routes to ``__global__``.
+        """
+        if not global_memory_requested:
+            return source_user_id, None
+
+        sender_id = str(source_user_id or "").strip()
+        normalized_owner = str(owner_id or "").strip()
+        if not normalized_owner:
+            return (
+                source_user_id,
+                "❌ Global memory mode is disabled. Set GLOBAL_MEMORY_OWNER_ID first.",
+            )
+        if not sender_id or sender_id != normalized_owner:
+            return source_user_id, "❌ /gmem is owner-only."
+        return None, None
+
+    @staticmethod
     def _agent_config_signature(
         model: str,
         runtime: dict,
         enabled_toolsets: list,
         ephemeral_prompt: str,
+        agent_user_id: Optional[str] = None,
     ) -> str:
         """Compute a stable string key from agent config values.
 
@@ -8297,6 +8386,9 @@ class GatewayRunner:
                 # reasoning_config excluded — it's set per-message on the
                 # cached agent and doesn't affect system prompt or tools.
                 ephemeral_prompt or "",
+                # user_id affects memory partitioning (__global__ fallback),
+                # so it must participate in cache signature.
+                str(agent_user_id or "__global__"),
             ],
             sort_keys=True,
             default=str,
@@ -8616,6 +8708,7 @@ class GatewayRunner:
         session_key: str = None,
         _interrupt_depth: int = 0,
         event_message_id: Optional[str] = None,
+        agent_user_id: Any = _AGENT_USER_ID_UNSET,
     ) -> Dict[str, Any]:
         """
         Run the agent with the given message and context.
@@ -8643,6 +8736,10 @@ class GatewayRunner:
 
         from run_agent import AIAgent
         import queue
+
+        resolved_agent_user_id = (
+            source.user_id if agent_user_id is _AGENT_USER_ID_UNSET else agent_user_id
+        )
 
         user_config = _load_gateway_config()
         platform_key = _platform_config_key(source.platform)
@@ -9166,6 +9263,7 @@ class GatewayRunner:
                 turn_route["runtime"],
                 enabled_toolsets,
                 combined_ephemeral,
+                agent_user_id=resolved_agent_user_id,
             )
             agent = None
             _cache_lock = getattr(self, "_agent_cache_lock", None)
@@ -9199,7 +9297,7 @@ class GatewayRunner:
                     provider_data_collection=pr.get("data_collection"),
                     session_id=session_id,
                     platform=platform_key,
-                    user_id=source.user_id,
+                    user_id=resolved_agent_user_id,
                     session_db=self._session_db,
                     fallback_model=self._fallback_model,
                 )
@@ -10087,6 +10185,7 @@ class GatewayRunner:
                     session_key=session_key,
                     _interrupt_depth=_interrupt_depth + 1,
                     event_message_id=next_message_id,
+                    agent_user_id=resolved_agent_user_id,
                 )
         finally:
             # Stop progress sender, interrupt monitor, and notification task

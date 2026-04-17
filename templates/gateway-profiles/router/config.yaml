@@ -34,3 +34,7 @@ platforms:
             model_id: frontmaster-agent
             base_url: http://127.0.0.1:8648
             api_key: "${FRONTMASTER_BACKEND_API_KEY}"
+          reviewpilot:
+            model_id: reviewpilot-agent
+            base_url: http://127.0.0.1:8649
+            api_key: "${REVIEWPILOT_BACKEND_API_KEY}"

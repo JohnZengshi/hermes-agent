@@ -128,11 +128,15 @@ class WebhookAdapter(BasePlatformAdapter):
 
         # Port conflict detection — fail fast if port is already in use
         import socket as _socket
+
         try:
             with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as _s:
                 _s.settimeout(1)
-                _s.connect(('127.0.0.1', self._port))
-            logger.error('[webhook] Port %d already in use. Set a different port in config.yaml: platforms.webhook.port', self._port)
+                _s.connect(("127.0.0.1", self._port))
+            logger.error(
+                "[webhook] Port %d already in use. Set a different port in config.yaml: platforms.webhook.port",
+                self._port,
+            )
             return False
         except (ConnectionRefusedError, OSError):
             pass  # port is free
@@ -205,14 +209,10 @@ class WebhookAdapter(BasePlatformAdapter):
             "bluebubbles",
             "qqbot",
         ):
-            return await self._deliver_cross_platform(
-                deliver_type, content, delivery
-            )
+            return await self._deliver_cross_platform(deliver_type, content, delivery)
 
         logger.warning("[webhook] Unknown deliver type: %s", deliver_type)
-        return SendResult(
-            success=False, error=f"Unknown deliver type: {deliver_type}"
-        )
+        return SendResult(success=False, error=f"Unknown deliver type: {deliver_type}")
 
     def _prune_delivery_info(self, now: float) -> None:
         """Drop delivery_info entries older than the idempotency TTL.
@@ -222,11 +222,7 @@ class WebhookAdapter(BasePlatformAdapter):
         even if many webhooks fire and never receive a final response.
         """
         cutoff = now - self._idempotency_ttl
-        stale = [
-            k
-            for k, t in self._delivery_info_created.items()
-            if t < cutoff
-        ]
+        stale = [k for k, t in self._delivery_info_created.items() if t < cutoff]
         for k in stale:
             self._delivery_info.pop(k, None)
             self._delivery_info_created.pop(k, None)
@@ -245,13 +241,16 @@ class WebhookAdapter(BasePlatformAdapter):
     def _reload_dynamic_routes(self) -> None:
         """Reload agent-created subscriptions from disk if the file changed."""
         from hermes_constants import get_hermes_home
+
         hermes_home = get_hermes_home()
         subs_path = hermes_home / _DYNAMIC_ROUTES_FILENAME
         if not subs_path.exists():
             if self._dynamic_routes:
                 self._dynamic_routes = {}
                 self._routes = dict(self._static_routes)
-                logger.debug("[webhook] Dynamic subscriptions file removed, cleared dynamic routes")
+                logger.debug(
+                    "[webhook] Dynamic subscriptions file removed, cleared dynamic routes"
+                )
             return
         try:
             mtime = subs_path.stat().st_mtime
@@ -262,8 +261,7 @@ class WebhookAdapter(BasePlatformAdapter):
                 return
             # Merge: static routes take precedence over dynamic ones
             self._dynamic_routes = {
-                k: v for k, v in data.items()
-                if k not in self._static_routes
+                k: v for k, v in data.items() if k not in self._static_routes
             }
             self._routes = {**self._dynamic_routes, **self._static_routes}
             self._dynamic_routes_mtime = mtime
@@ -292,18 +290,14 @@ class WebhookAdapter(BasePlatformAdapter):
         # Check Content-Length before reading the full payload.
         content_length = request.content_length or 0
         if content_length > self._max_body_bytes:
-            return web.json_response(
-                {"error": "Payload too large"}, status=413
-            )
+            return web.json_response({"error": "Payload too large"}, status=413)
 
         # ── Rate limiting ────────────────────────────────────────
         now = time.time()
         window = self._rate_counts.setdefault(route_name, [])
         window[:] = [t for t in window if now - t < 60]
         if len(window) >= self._rate_limit:
-            return web.json_response(
-                {"error": "Rate limit exceeded"}, status=429
-            )
+            return web.json_response({"error": "Rate limit exceeded"}, status=429)
         window.append(now)
 
         # Read body
@@ -317,12 +311,8 @@ class WebhookAdapter(BasePlatformAdapter):
         secret = route_config.get("secret", self._global_secret)
         if secret and secret != _INSECURE_NO_AUTH:
             if not self._validate_signature(request, raw_body, secret):
-                logger.warning(
-                    "[webhook] Invalid signature for route %s", route_name
-                )
-                return web.json_response(
-                    {"error": "Invalid signature"}, status=401
-                )
+                logger.warning("[webhook] Invalid signature for route %s", route_name)
+                return web.json_response({"error": "Invalid signature"}, status=401)
 
         # Parse payload
         try:
@@ -332,13 +322,11 @@ class WebhookAdapter(BasePlatformAdapter):
             try:
                 import urllib.parse
 
-                payload = dict(
-                    urllib.parse.parse_qsl(raw_body.decode("utf-8"))
-                )
+                payload = dict(urllib.parse.parse_qsl(raw_body.decode("utf-8")))
             except Exception:
-                return web.json_response(
-                    {"error": "Cannot parse body"}, status=400
-                )
+                return web.json_response({"error": "Cannot parse body"}, status=400)
+
+        normalized_payload = self._normalize_payload_for_render(payload)
 
         # Check event type filter
         event_type = (
@@ -355,14 +343,12 @@ class WebhookAdapter(BasePlatformAdapter):
                 route_name,
                 allowed_events,
             )
-            return web.json_response(
-                {"status": "ignored", "event": event_type}
-            )
+            return web.json_response({"status": "ignored", "event": event_type})
 
         # Format prompt from template
         prompt_template = route_config.get("prompt", "")
         prompt = self._render_prompt(
-            prompt_template, payload, event_type, route_name
+            prompt_template, normalized_payload, event_type, route_name
         )
 
         # Inject skill content if configured.
@@ -388,9 +374,7 @@ class WebhookAdapter(BasePlatformAdapter):
                             prompt = skill_content
                             break  # Load the first matching skill
                     else:
-                        logger.warning(
-                            "[webhook] Skill '%s' not found", skill_name
-                        )
+                        logger.warning("[webhook] Skill '%s' not found", skill_name)
             except Exception as e:
                 logger.warning("[webhook] Skill loading failed: %s", e)
 
@@ -410,9 +394,7 @@ class WebhookAdapter(BasePlatformAdapter):
             if now - v < self._idempotency_ttl
         }
         if delivery_id in self._seen_deliveries:
-            logger.info(
-                "[webhook] Skipping duplicate delivery %s", delivery_id
-            )
+            logger.info("[webhook] Skipping duplicate delivery %s", delivery_id)
             return web.json_response(
                 {"status": "duplicate", "delivery_id": delivery_id},
                 status=200,
@@ -429,7 +411,7 @@ class WebhookAdapter(BasePlatformAdapter):
         deliver_config = {
             "deliver": route_config.get("deliver", "log"),
             "deliver_extra": self._render_delivery_extra(
-                route_config.get("deliver_extra", {}), payload
+                route_config.get("deliver_extra", {}), normalized_payload
             ),
             "payload": payload,
         }
@@ -488,9 +470,9 @@ class WebhookAdapter(BasePlatformAdapter):
         # GitHub: X-Hub-Signature-256 = sha256=<hex>
         gh_sig = request.headers.get("X-Hub-Signature-256", "")
         if gh_sig:
-            expected = "sha256=" + hmac.new(
-                secret.encode(), body, hashlib.sha256
-            ).hexdigest()
+            expected = (
+                "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+            )
             return hmac.compare_digest(gh_sig, expected)
 
         # GitLab: X-Gitlab-Token = <plain secret>
@@ -501,15 +483,11 @@ class WebhookAdapter(BasePlatformAdapter):
         # Generic: X-Webhook-Signature = <hex HMAC-SHA256>
         generic_sig = request.headers.get("X-Webhook-Signature", "")
         if generic_sig:
-            expected = hmac.new(
-                secret.encode(), body, hashlib.sha256
-            ).hexdigest()
+            expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
             return hmac.compare_digest(generic_sig, expected)
 
         # No recognised signature header but secret is configured → reject
-        logger.debug(
-            "[webhook] Secret configured but no signature header found"
-        )
+        logger.debug("[webhook] Secret configured but no signature header found")
         return False
 
     # ------------------------------------------------------------------
@@ -556,37 +534,129 @@ class WebhookAdapter(BasePlatformAdapter):
 
         return re.sub(r"\{([a-zA-Z0-9_.]+)\}", _resolve, template)
 
-    def _render_delivery_extra(
-        self, extra: dict, payload: dict
-    ) -> dict:
+    def _render_delivery_extra(self, extra: dict, payload: dict) -> dict:
         """Render delivery_extra template values with payload data."""
         rendered: Dict[str, Any] = {}
         for key, value in extra.items():
             if isinstance(value, str):
-                rendered[key] = self._render_prompt(value, payload, "", "")
+                # Keep plain strings/empties unchanged.
+                # Only treat values containing template tokens as prompt templates.
+                if "{" in value and "}" in value:
+                    rendered[key] = self._render_prompt(value, payload, "", "")
+                else:
+                    rendered[key] = value
             else:
                 rendered[key] = value
         return rendered
+
+    def _normalize_payload_for_render(self, payload: dict) -> dict:
+        """Normalize common webhook payload field variants for prompt templates.
+
+        This keeps existing payload keys intact and fills a few aliases so
+        templates can stay stable across providers (especially GitLab push tests).
+        """
+        if not isinstance(payload, dict):
+            return payload
+
+        normalized = dict(payload)
+        project = normalized.get("project")
+        repository = normalized.get("repository")
+
+        # Alias GitLab project.path_with_namespace -> repository.full_name
+        project_full_name = None
+        project_web_url = None
+        if isinstance(project, dict):
+            project_full_name = project.get("path_with_namespace") or project.get(
+                "path"
+            )
+            project_web_url = project.get("web_url")
+
+        if isinstance(repository, dict):
+            if not repository.get("full_name") and project_full_name:
+                repository_copy = dict(repository)
+                repository_copy["full_name"] = str(project_full_name)
+                normalized["repository"] = repository_copy
+        elif project_full_name:
+            normalized["repository"] = {"full_name": str(project_full_name)}
+
+        # Alias GitLab actor fields to pusher.name when needed
+        pusher = normalized.get("pusher")
+        if not isinstance(pusher, dict):
+            actor_name = normalized.get("user_name") or normalized.get("user_username")
+            if actor_name:
+                normalized["pusher"] = {"name": str(actor_name)}
+
+        # Build a best-effort head_commit from commits[] if missing
+        if not isinstance(normalized.get("head_commit"), dict):
+            commits = normalized.get("commits")
+            if isinstance(commits, list) and commits:
+                latest_commit = commits[-1]
+                if isinstance(latest_commit, dict):
+                    head_commit: Dict[str, Any] = {}
+                    if latest_commit.get("id") is not None:
+                        head_commit["id"] = latest_commit.get("id")
+                    if latest_commit.get("message") is not None:
+                        head_commit["message"] = latest_commit.get("message")
+
+                    author = latest_commit.get("author")
+                    author_username = None
+                    if isinstance(author, dict):
+                        author_username = author.get("username") or author.get("name")
+                    if not author_username:
+                        author_username = normalized.get("user_username")
+                    if author_username:
+                        head_commit["author"] = {"username": str(author_username)}
+
+                    if head_commit:
+                        normalized["head_commit"] = head_commit
+
+        # Enrich head_commit with common GitLab fallbacks when partial/missing.
+        head_commit = normalized.get("head_commit")
+        if not isinstance(head_commit, dict):
+            head_commit = {}
+        if isinstance(head_commit, dict):
+            head_commit_copy = dict(head_commit)
+
+            if not head_commit_copy.get("id"):
+                checkout_sha = normalized.get("checkout_sha")
+                after_sha = normalized.get("after")
+                fallback_sha = checkout_sha or after_sha
+                if fallback_sha:
+                    head_commit_copy["id"] = str(fallback_sha)
+
+            if not head_commit_copy.get("url") and project_web_url:
+                commit_id = head_commit_copy.get("id")
+                if commit_id:
+                    head_commit_copy["url"] = (
+                        f"{str(project_web_url).rstrip('/')}/-/commit/{commit_id}"
+                    )
+
+            normalized["head_commit"] = head_commit_copy
+
+        # Alias compare URL when provider payload doesn't include compare directly.
+        if not normalized.get("compare") and project_web_url:
+            before_sha = normalized.get("before")
+            after_sha = normalized.get("after")
+            if before_sha and after_sha:
+                normalized["compare"] = (
+                    f"{str(project_web_url).rstrip('/')}/-/compare/{before_sha}...{after_sha}"
+                )
+
+        return normalized
 
     # ------------------------------------------------------------------
     # Response delivery
     # ------------------------------------------------------------------
 
-    async def _deliver_github_comment(
-        self, content: str, delivery: dict
-    ) -> SendResult:
+    async def _deliver_github_comment(self, content: str, delivery: dict) -> SendResult:
         """Post agent response as a GitHub PR/issue comment via ``gh`` CLI."""
         extra = delivery.get("deliver_extra", {})
         repo = extra.get("repo", "")
         pr_number = extra.get("pr_number", "")
 
         if not repo or not pr_number:
-            logger.error(
-                "[webhook] github_comment delivery missing repo or pr_number"
-            )
-            return SendResult(
-                success=False, error="Missing repo or pr_number"
-            )
+            logger.error("[webhook] github_comment delivery missing repo or pr_number")
+            return SendResult(success=False, error="Missing repo or pr_number")
 
         try:
             result = subprocess.run(
@@ -605,23 +675,17 @@ class WebhookAdapter(BasePlatformAdapter):
                 timeout=30,
             )
             if result.returncode == 0:
-                logger.info(
-                    "[webhook] Posted comment on %s#%s", repo, pr_number
-                )
+                logger.info("[webhook] Posted comment on %s#%s", repo, pr_number)
                 return SendResult(success=True)
             else:
-                logger.error(
-                    "[webhook] gh pr comment failed: %s", result.stderr
-                )
+                logger.error("[webhook] gh pr comment failed: %s", result.stderr)
                 return SendResult(success=False, error=result.stderr)
         except FileNotFoundError:
             logger.error(
                 "[webhook] 'gh' CLI not found — install GitHub CLI for "
                 "github_comment delivery"
             )
-            return SendResult(
-                success=False, error="gh CLI not installed"
-            )
+            return SendResult(success=False, error="gh CLI not installed")
         except Exception as e:
             logger.error("[webhook] github_comment delivery error: %s", e)
             return SendResult(success=False, error=str(e))
@@ -639,9 +703,7 @@ class WebhookAdapter(BasePlatformAdapter):
         try:
             target_platform = Platform(platform_name)
         except ValueError:
-            return SendResult(
-                success=False, error=f"Unknown platform: {platform_name}"
-            )
+            return SendResult(success=False, error=f"Unknown platform: {platform_name}")
 
         adapter = self.gateway_runner.adapters.get(target_platform)
         if not adapter:
@@ -650,13 +712,38 @@ class WebhookAdapter(BasePlatformAdapter):
                 error=f"Platform {platform_name} not connected",
             )
 
-        # Use home channel if no specific chat_id in deliver_extra
+        # Resolve one or more target chats from deliver_extra.
+        # Backward compatible keys:
+        #   - chat_id: single chat target
+        # New multi-target keys:
+        #   - chat_ids: comma-separated string or list[str]
         extra = delivery.get("deliver_extra", {})
-        chat_id = extra.get("chat_id", "")
-        if not chat_id:
+        chat_ids_raw = extra.get("chat_ids")
+        target_chat_ids: List[str] = []
+
+        if isinstance(chat_ids_raw, str):
+            target_chat_ids = [
+                cid.strip() for cid in chat_ids_raw.split(",") if cid.strip()
+            ]
+        elif isinstance(chat_ids_raw, list):
+            for cid in chat_ids_raw:
+                if cid is None:
+                    continue
+                normalized = str(cid).strip()
+                if normalized:
+                    target_chat_ids.append(normalized)
+
+        # Fallback to legacy single-chat key when chat_ids is not provided/usable
+        if not target_chat_ids:
+            chat_id = str(extra.get("chat_id", "")).strip()
+            if chat_id:
+                target_chat_ids = [chat_id]
+
+        # Final fallback: home channel
+        if not target_chat_ids:
             home = self.gateway_runner.config.get_home_channel(target_platform)
             if home:
-                chat_id = home.chat_id
+                target_chat_ids = [home.chat_id]
             else:
                 return SendResult(
                     success=False,
@@ -669,4 +756,22 @@ class WebhookAdapter(BasePlatformAdapter):
         if thread_id:
             metadata = {"thread_id": thread_id}
 
-        return await adapter.send(chat_id, content, metadata=metadata)
+        failures: List[str] = []
+        first_success: Optional[SendResult] = None
+        for chat_id in target_chat_ids:
+            result = await adapter.send(chat_id, content, metadata=metadata)
+            if result.success:
+                if first_success is None:
+                    first_success = result
+            else:
+                failures.append(f"{chat_id}: {result.error or 'send failed'}")
+
+        if first_success and not failures:
+            return first_success
+        if first_success and failures:
+            return SendResult(
+                success=False,
+                message_id=first_success.message_id,
+                error="; ".join(failures),
+            )
+        return SendResult(success=False, error="; ".join(failures) or "send failed")

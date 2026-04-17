@@ -1,0 +1,121 @@
+# Generated from project template.
+# Edit templates/gateway-profiles/reviewpilot/config.yaml, then resync.
+
+verbose: 1
+
+# 群聊会话策略：同一群（含话题/线程维度）共享上下文，不按发言人拆分 session
+group_sessions_per_user: false
+thread_sessions_per_user: false
+
+# 未授权私聊静默忽略（不返回配对码）
+unauthorized_dm_behavior: ignore
+
+platforms:
+  api_server:
+    enabled: true
+    extra:
+      host: 0.0.0.0
+      port: 8649
+      key: "${API_KEY}"
+
+  telegram:
+    enabled: true
+    token: "${TELEGRAM_BOT_TOKEN}"
+    unauthorized_dm_behavior: ignore
+    extra:
+      # 群里只在触发条件满足时回复：@bot、回复 bot、/命令
+      require_mention: true
+      # 留空表示没有“全量自动回复”群，避免每条消息都回
+      free_response_chats: []
+
+  webhook:
+    enabled: true
+    extra:
+      port: 8650
+      secret: "${WEBHOOK_GLOBAL_SECRET}"
+      routes:
+        review-git-push:
+          # 兼容 GitLab（Push Hook）与通用 push 事件
+          events: ["Push Hook", "push"]
+          secret: "${REVIEW_PUSH_ROUTE_SECRET}"
+          prompt: |
+            你是代码审查机器人。请处理一次 Git push 事件并输出结构化审查结论。
+
+            【推送事件】
+            - 仓库: {repository.full_name}
+            - 分支: {ref}
+            - 推送人: {pusher.name}
+            - 提交人: {head_commit.author.username}
+            - 最新提交: {head_commit.id}
+            - 提交消息: {head_commit.message}
+            - 比较链接: {compare}
+
+            【允许触发仓库】
+            - john/aigt-app-repo
+            - root/AIGT-APP
+            - john/kelivo
+
+            【输出要求】
+            1) 若仓库不在允许列表，回复必须仅包含 [SILENT]。
+            2) 若在允许列表：
+               - 如果这是测试/占位事件（例如 compare 为空或仍是占位符、无 commits 且无可审查 diff），不要给“阻塞结论”，改为输出“Webhook 连通测试成功，等待真实 push 审查”。
+               - 仅在拿到真实变更证据时，输出：结论（阻塞/建议）、风险项、建议动作、下一步。
+            3) 输出首行必须带提醒对象：${REVIEW_MENTION_HANDLES}
+          deliver: "telegram"
+          deliver_extra:
+            # 支持多群：优先读取 TELEGRAM_REVIEW_GROUP_IDS（逗号分隔）
+            chat_ids: "${TELEGRAM_REVIEW_GROUP_IDS}"
+            # 兼容旧变量（仅单群）
+            chat_id: "${TELEGRAM_REVIEW_GROUP_ID}"
+            message_thread_id: "${TELEGRAM_REVIEW_THREAD_ID}"
+
+model:
+  default: gpt-5.3-codex
+  provider: custom
+  base_url: "${CPAMC_BASE_URL}"
+  api_key: "${CPAMC_API_KEY}"
+
+memory:
+  memory_enabled: true
+  backend: sqlite
+  user_profile_enabled: true
+  nudge_interval: 3
+
+session_search:
+  # 默认仅在当前会话 lineage 内检索，避免串群回忆
+  scope: current
+
+cron:
+  # 保留默认；当前审查主触发为 webhook
+  wrap_response: false
+
+platform_toolsets:
+  api_server:
+    - terminal
+    - process
+    - file
+    - web
+    - memory
+    - skills_list
+
+terminal:
+  backend: docker
+  # strict(默认最安全) / relaxed(允许agent在容器内做更多系统级环境自修，如apt安装)
+  docker_security_mode: relaxed
+  cwd: /workspace
+  timeout: 120
+  lifetime_seconds: 900
+  docker_image: python:3.11-slim
+  container_cpu: 2
+  container_memory: 4096
+  container_disk: 10240
+  container_persistent: false
+  persistent_shell: false
+  docker_mount_cwd_to_workspace: false
+  docker_volumes:
+    - "/tmp/hermes-workspace:/workspace"
+  docker_env:
+    TZ: "Asia/Shanghai"
+    PYTHONDONTWRITEBYTECODE: "1"
+    PYTHONUNBUFFERED: "1"
+    GIT_TERMINAL_PROMPT: "0"
