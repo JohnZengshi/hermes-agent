@@ -10,9 +10,9 @@ SETUP_DOCKER_LINUX_SCRIPT="$ROOT_DIR/scripts/setup_docker_sandbox_linux.sh"
 LOG_DIR="$ROOT_DIR/logs"
 
 # 加载项目级环境配置（不提交 git）
-if [ -f "$ROOT_DIR/.env.local" ]; then
+if [ -f "$ROOT_DIR/.env" ]; then
     set -a
-    . "$ROOT_DIR/.env.local"
+    . "$ROOT_DIR/.env"
     set +a
 fi
 
