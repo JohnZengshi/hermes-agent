@@ -186,13 +186,13 @@ for profile in "${SELECTED_PROFILES[@]}"; do
             validate_profile_env doubao API_KEY
             ;;
         codecraft)
-            validate_profile_env codecraft API_KEY CODECRAFT_BASE_URL THIRD_PARTY_API_KEY
+            validate_profile_env codecraft API_KEY
             ;;
         flora)
             validate_profile_env flora API_KEY
             ;;
         frontmaster)
-            validate_profile_env frontmaster API_KEY FRONTMASTER_BASE_URL THIRD_PARTY_API_KEY
+            validate_profile_env frontmaster API_KEY
             ;;
         reviewpilot)
             validate_profile_env reviewpilot API_KEY
