@@ -7,7 +7,22 @@ from unittest.mock import patch
 import pytest
 
 import hermes_constants
-from hermes_constants import get_default_hermes_root, is_container
+from hermes_constants import get_default_hermes_root, get_hermes_home, is_container
+
+
+class TestGetHermesHome:
+    """Tests for get_hermes_home() path expansion behavior."""
+
+    def test_expands_tilde(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HERMES_HOME", "~/.hermes-dev")
+        assert get_hermes_home() == tmp_path / ".hermes-dev"
+
+    def test_expands_home_env_var(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("HERMES_HOME", "$HOME/.hermes-dev")
+        assert get_hermes_home() == tmp_path / ".hermes-dev"
 
 
 class TestGetDefaultHermesRoot:
@@ -61,6 +76,25 @@ class TestGetDefaultHermesRoot:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.setenv("HERMES_HOME", str(profile))
         assert get_default_hermes_root() == docker_root
+
+    def test_expanded_home_profile_still_returns_native_root(self, tmp_path, monkeypatch):
+        """Expanded $HOME profile paths still resolve to ~/.hermes root."""
+        native = tmp_path / ".hermes"
+        profile = native / "profiles" / "coder"
+        profile.mkdir(parents=True)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("HERMES_HOME", "$HOME/.hermes/profiles/coder")
+        assert get_default_hermes_root() == native
+
+    def test_expanded_home_custom_path_returns_custom_root(self, tmp_path, monkeypatch):
+        """Expanded $HOME custom paths still resolve outside ~/.hermes."""
+        custom = tmp_path / "my-hermes-data"
+        custom.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("HERMES_HOME", "$HOME/my-hermes-data")
+        assert get_default_hermes_root() == custom
 
 
 class TestIsContainer:
