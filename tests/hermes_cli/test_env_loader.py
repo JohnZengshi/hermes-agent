@@ -1,9 +1,8 @@
 import importlib
 import os
 import sys
-from pathlib import Path
 
-from hermes_cli.env_loader import load_hermes_dotenv
+from hermes_cli.env_loader import bootstrap_project_hermes_home, load_hermes_dotenv
 
 
 def test_user_env_overrides_stale_shell_values(tmp_path, monkeypatch):
@@ -68,3 +67,29 @@ def test_main_import_applies_user_env_over_shell_values(tmp_path, monkeypatch):
 
     assert os.getenv("OPENAI_BASE_URL") == "https://new.example/v1"
     assert os.getenv("HERMES_INFERENCE_PROVIDER") == "custom"
+
+
+def test_bootstrap_project_hermes_home_sets_missing_home_from_project_env(tmp_path, monkeypatch):
+    project_env = tmp_path / ".env"
+    project_env.write_text('HERMES_HOME="$HOME/.hermes-dev"\n', encoding="utf-8")
+
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    resolved = bootstrap_project_hermes_home(project_env)
+
+    assert os.environ["HERMES_HOME"] == "$HOME/.hermes-dev"
+    assert resolved == tmp_path / ".hermes-dev"
+
+
+def test_bootstrap_project_hermes_home_does_not_override_existing_env(tmp_path, monkeypatch):
+    project_env = tmp_path / ".env"
+    project_env.write_text("HERMES_HOME=/tmp/from-project\n", encoding="utf-8")
+
+    existing = tmp_path / "already-set"
+    monkeypatch.setenv("HERMES_HOME", str(existing))
+
+    resolved = bootstrap_project_hermes_home(project_env)
+
+    assert resolved is None
+    assert os.environ["HERMES_HOME"] == str(existing)

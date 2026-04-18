@@ -83,16 +83,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from hermes_constants import get_hermes_home
 from utils import atomic_yaml_write, is_truthy_value
 
-_hermes_home = get_hermes_home()
-
 # Load environment variables from ~/.hermes/.env first.
 # User-managed env files should override stale shell exports on restart.
 from dotenv import load_dotenv  # backward-compat for tests that monkeypatch this symbol
-from hermes_cli.env_loader import load_hermes_dotenv
+from hermes_cli.env_loader import bootstrap_project_hermes_home, load_hermes_dotenv
 
+_project_env = Path(__file__).resolve().parents[1] / ".env"
+bootstrap_project_hermes_home(_project_env)
+_hermes_home = get_hermes_home()
 _env_path = _hermes_home / ".env"
 load_hermes_dotenv(
-    hermes_home=_hermes_home, project_env=Path(__file__).resolve().parents[1] / ".env"
+    hermes_home=_hermes_home, project_env=_project_env
 )
 
 # Bridge config.yaml values into the environment so os.getenv() picks them up.

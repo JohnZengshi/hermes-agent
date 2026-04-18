@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 
 # Env var name suffixes that indicate credential values.  These are the
@@ -89,10 +89,43 @@ def _sanitize_env_file_if_needed(path: Path) -> None:
         pass  # best-effort — don't block gateway startup
 
 
+def bootstrap_project_hermes_home(project_env: str | os.PathLike[str] | None) -> Path | None:
+    """Seed ``HERMES_HOME`` from project ``.env`` when not already set.
+
+    This is only for early bootstrap before the normal two-stage dotenv load.
+    It intentionally affects just ``HERMES_HOME`` and only when the process
+    environment has not already selected a home (for example via shell export
+    or profile override).
+    """
+    if os.environ.get("HERMES_HOME"):
+        return None
+    if not project_env:
+        return None
+
+    project_env_path = Path(project_env)
+    if not project_env_path.exists():
+        return None
+
+    try:
+        parsed = dotenv_values(project_env_path, encoding="utf-8")
+    except UnicodeDecodeError:
+        parsed = dotenv_values(project_env_path, encoding="latin-1")
+
+    raw_home = parsed.get("HERMES_HOME")
+    if not raw_home:
+        return None
+
+    os.environ["HERMES_HOME"] = raw_home
+
+    from hermes_constants import get_hermes_home
+
+    return get_hermes_home()
+
+
 def load_hermes_dotenv(
     *,
-    hermes_home: str | os.PathLike | None = None,
-    project_env: str | os.PathLike | None = None,
+    hermes_home: str | os.PathLike[str] | None = None,
+    project_env: str | os.PathLike[str] | None = None,
 ) -> list[Path]:
     """Load Hermes environment files with user config taking precedence.
 

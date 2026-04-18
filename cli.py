@@ -71,10 +71,11 @@ _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
 # User-managed env files should override stale shell exports on restart.
 from hermes_constants import get_hermes_home, display_hermes_home
-from hermes_cli.env_loader import load_hermes_dotenv
+from hermes_cli.env_loader import bootstrap_project_hermes_home, load_hermes_dotenv
 
-_hermes_home = get_hermes_home()
 _project_env = Path(__file__).parent / '.env'
+bootstrap_project_hermes_home(_project_env)
+_hermes_home = get_hermes_home()
 load_hermes_dotenv(hermes_home=_hermes_home, project_env=_project_env)
 
 
